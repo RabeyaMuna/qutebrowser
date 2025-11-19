@@ -10,7 +10,6 @@ from qutebrowser.utils import usertypes
 
 
 class TestInit:
-
     """Just try to init some neighborlists."""
 
     def test_empty(self):
@@ -37,11 +36,10 @@ class TestInit:
     def test_invalid_mode(self):
         """Test with an invalid mode."""
         with pytest.raises(TypeError):
-            usertypes.NeighborList(mode='blah')
+            usertypes.NeighborList(mode="blah")
 
 
 class TestDefaultArg:
-
     """Test the default argument."""
 
     def test_simple(self):
@@ -67,7 +65,6 @@ class TestDefaultArg:
 
 
 class TestEmpty:
-
     """Tests with no items."""
 
     @pytest.fixture
@@ -96,7 +93,6 @@ class TestEmpty:
 
 
 class TestItems:
-
     """Tests with items."""
 
     @pytest.fixture
@@ -150,7 +146,6 @@ class TestItems:
 
 
 class TestSingleItem:
-
     """Tests with a list with only one item."""
 
     @pytest.fixture
@@ -193,14 +188,13 @@ class TestSingleItem:
 
 
 class TestEdgeMode:
-
     """Tests with mode=edge."""
 
     @pytest.fixture
     def neighborlist(self):
         return usertypes.NeighborList(
-            [1, 2, 3, 4, 5], default=3,
-            mode=usertypes.NeighborList.Modes.edge)
+            [1, 2, 3, 4, 5], default=3, mode=usertypes.NeighborList.Modes.edge
+        )
 
     def test_first(self, neighborlist):
         """Test out of bounds previtem()."""
@@ -218,14 +212,13 @@ class TestEdgeMode:
 
 
 class TestExceptionMode:
-
     """Tests with mode=exception."""
 
     @pytest.fixture
     def neighborlist(self):
         return usertypes.NeighborList(
-            [1, 2, 3, 4, 5], default=3,
-            mode=usertypes.NeighborList.Modes.exception)
+            [1, 2, 3, 4, 5], default=3, mode=usertypes.NeighborList.Modes.exception
+        )
 
     def test_first(self, neighborlist):
         """Test out of bounds previtem()."""
@@ -245,7 +238,6 @@ class TestExceptionMode:
 
 
 class TestSnapIn:
-
     """Tests for the fuzzyval/_snap_in features."""
 
     @pytest.fixture

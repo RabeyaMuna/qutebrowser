@@ -14,7 +14,6 @@ from qutebrowser.api import cmdutils
 
 
 class _ReadlineBridge:
-
     """Bridge which provides readline-like commands for the current QLineEdit.
 
     Attributes:
@@ -36,9 +35,7 @@ class _ReadlineBridge:
         else:
             return None
 
-    def _dispatch(self, name: str, *,
-                  mark: bool = None,
-                  delete: bool = False) -> None:
+    def _dispatch(self, name: str, *, mark: bool = None, delete: bool = False) -> None:
         widget = self._widget()
         if widget is None:
             return
@@ -54,28 +51,28 @@ class _ReadlineBridge:
             widget.del_()
 
     def backward_char(self) -> None:
-        self._dispatch('cursorBackward', mark=False)
+        self._dispatch("cursorBackward", mark=False)
 
     def forward_char(self) -> None:
-        self._dispatch('cursorForward', mark=False)
+        self._dispatch("cursorForward", mark=False)
 
     def backward_word(self) -> None:
-        self._dispatch('cursorWordBackward', mark=False)
+        self._dispatch("cursorWordBackward", mark=False)
 
     def forward_word(self) -> None:
-        self._dispatch('cursorWordForward', mark=False)
+        self._dispatch("cursorWordForward", mark=False)
 
     def beginning_of_line(self) -> None:
-        self._dispatch('home', mark=False)
+        self._dispatch("home", mark=False)
 
     def end_of_line(self) -> None:
-        self._dispatch('end', mark=False)
+        self._dispatch("end", mark=False)
 
     def unix_line_discard(self) -> None:
-        self._dispatch('home', mark=True, delete=True)
+        self._dispatch("home", mark=True, delete=True)
 
     def kill_line(self) -> None:
-        self._dispatch('end', mark=True, delete=True)
+        self._dispatch("end", mark=True, delete=True)
 
     def rubout(self, delim: Iterable[str]) -> None:
         """Delete backwards using the characters in delim as boundaries.
@@ -152,10 +149,10 @@ class _ReadlineBridge:
         widget.del_()
 
     def backward_kill_word(self) -> None:
-        self._dispatch('cursorWordBackward', mark=True, delete=True)
+        self._dispatch("cursorWordBackward", mark=True, delete=True)
 
     def kill_word(self) -> None:
-        self._dispatch('cursorWordForward', mark=True, delete=True)
+        self._dispatch("cursorWordForward", mark=True, delete=True)
 
     def yank(self) -> None:
         """Paste previously deleted text."""
@@ -165,10 +162,10 @@ class _ReadlineBridge:
         widget.insert(self._deleted[widget])
 
     def delete_char(self) -> None:
-        self._dispatch('del_')
+        self._dispatch("del_")
 
     def backward_delete_char(self) -> None:
-        self._dispatch('backspace')
+        self._dispatch("backspace")
 
 
 bridge = _ReadlineBridge()
@@ -176,8 +173,8 @@ bridge = _ReadlineBridge()
 
 def _register(**kwargs: Any) -> Callable[..., Any]:
     return cmdutils.register(
-        modes=[cmdutils.KeyMode.command, cmdutils.KeyMode.prompt],
-        **kwargs)
+        modes=[cmdutils.KeyMode.command, cmdutils.KeyMode.prompt], **kwargs
+    )
 
 
 @_register()
@@ -264,7 +261,7 @@ def rl_unix_word_rubout() -> None:
 
 @_register(
     deprecated='Use :rl-filename-rubout or :rl-rubout " /" instead '
-               '(see their `:help` for details).'
+    "(see their `:help` for details)."
 )
 def rl_unix_filename_rubout() -> None:
     """Remove chars from the cursor to the previous path separator.

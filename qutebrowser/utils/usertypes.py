@@ -19,24 +19,22 @@ from qutebrowser.qt.core import QUrl
 from qutebrowser.utils import log, qtutils, utils
 
 
-_T = TypeVar('_T', bound=utils.Comparable)
+_T = TypeVar("_T", bound=utils.Comparable)
 
 
 class Unset:
-
     """Class for an unset object."""
 
     __slots__ = ()
 
     def __repr__(self) -> str:
-        return '<UNSET>'
+        return "<UNSET>"
 
 
 UNSET = Unset()
 
 
 class NeighborList(Sequence[_T]):
-
     """A list of items which saves its current position.
 
     Class attributes:
@@ -50,15 +48,17 @@ class NeighborList(Sequence[_T]):
     """
 
     class Modes(enum.Enum):
-
         """Behavior for the 'mode' argument."""
 
         edge = enum.auto()
         exception = enum.auto()
 
-    def __init__(self, items: Sequence[_T] = None,
-                 default: Union[_T, Unset] = UNSET,
-                 mode: Modes = Modes.exception) -> None:
+    def __init__(
+        self,
+        items: Sequence[_T] = None,
+        default: Union[_T, Unset] = UNSET,
+        mode: Modes = Modes.exception,
+    ) -> None:
         """Constructor.
 
         Args:
@@ -92,8 +92,13 @@ class NeighborList(Sequence[_T]):
         return len(self._items)
 
     def __repr__(self) -> str:
-        return utils.get_repr(self, items=self._items, mode=self._mode,
-                              idx=self._idx, fuzzyval=self.fuzzyval)
+        return utils.get_repr(
+            self,
+            items=self._items,
+            mode=self._mode,
+            idx=self._idx,
+            fuzzyval=self.fuzzyval,
+        )
 
     def _snap_in(self, offset: int) -> bool:
         """Set the current item to the closest item to self.fuzzyval.
@@ -109,13 +114,11 @@ class NeighborList(Sequence[_T]):
         assert isinstance(self.fuzzyval, (int, float)), self.fuzzyval
 
         op = operator.le if offset < 0 else operator.ge
-        items = [(idx, e) for (idx, e) in enumerate(self._items)
-                 if op(e, self.fuzzyval)]
+        items = [
+            (idx, e) for (idx, e) in enumerate(self._items) if op(e, self.fuzzyval)
+        ]
         if items:
-            item = min(
-                items,
-                key=lambda tpl:
-                abs(self.fuzzyval - tpl[1]))  # type: ignore[operator]
+            item = min(items, key=lambda tpl: abs(self.fuzzyval - tpl[1]))  # type: ignore[operator]
         else:
             sorted_items = sorted(enumerate(self.items), key=lambda e: e[1])
             idx = 0 if offset < 0 else -1
@@ -165,8 +168,9 @@ class NeighborList(Sequence[_T]):
         Return:
             The new item.
         """
-        log.misc.debug("{} items, idx {}, offset {}".format(
-            len(self._items), self._idx, offset))
+        log.misc.debug(
+            "{} items, idx {}, offset {}".format(len(self._items), self._idx, offset)
+        )
         if not self._items:
             raise IndexError("No items found!")
         if self.fuzzyval is not None:
@@ -219,7 +223,6 @@ class NeighborList(Sequence[_T]):
 
 
 class PromptMode(enum.Enum):
-
     """The mode of a Question."""
 
     yesno = enum.auto()
@@ -230,7 +233,6 @@ class PromptMode(enum.Enum):
 
 
 class ClickTarget(enum.Enum):
-
     """How to open a clicked link."""
 
     normal = enum.auto()  #: Open the link in the current tab
@@ -241,7 +243,6 @@ class ClickTarget(enum.Enum):
 
 
 class KeyMode(enum.Enum):
-
     """Key input modes."""
 
     normal = enum.auto()  #: Normal mode (no mode was entered)
@@ -263,7 +264,6 @@ class KeyMode(enum.Enum):
 
 
 class Exit(enum.IntEnum):
-
     """Exit statuses for errors. Needs to be an int for sys.exit."""
 
     ok = 0
@@ -274,7 +274,6 @@ class Exit(enum.IntEnum):
 
 
 class LoadStatus(enum.Enum):
-
     """Load status of a tab."""
 
     none = enum.auto()
@@ -286,7 +285,6 @@ class LoadStatus(enum.Enum):
 
 
 class Backend(enum.Enum):
-
     """The backend being used (usertypes.backend)."""
 
     # pylint: disable=invalid-name
@@ -295,7 +293,6 @@ class Backend(enum.Enum):
 
 
 class JsWorld(enum.Enum):
-
     """World/context to run JavaScript code in."""
 
     main = enum.auto()  #: Same world as the web page's JavaScript.
@@ -305,7 +302,6 @@ class JsWorld(enum.Enum):
 
 
 class JsLogLevel(enum.Enum):
-
     """Log level of a JS message.
 
     This needs to match up with the keys allowed for the
@@ -319,7 +315,6 @@ class JsLogLevel(enum.Enum):
 
 
 class MessageLevel(enum.Enum):
-
     """The level of a message being shown."""
 
     error = enum.auto()
@@ -328,7 +323,6 @@ class MessageLevel(enum.Enum):
 
 
 class IgnoreCase(enum.Enum):
-
     """Possible values for the 'search.ignore_case' setting."""
 
     smart = enum.auto()
@@ -337,7 +331,6 @@ class IgnoreCase(enum.Enum):
 
 
 class CommandValue(enum.Enum):
-
     """Special values which are injected when running a command handler."""
 
     count = enum.auto()
@@ -347,7 +340,6 @@ class CommandValue(enum.Enum):
 
 
 class Question(QObject):
-
     """A question asked to the user, e.g. via the status bar.
 
     Note the creator is responsible for cleaning up the question after it
@@ -404,9 +396,14 @@ class Question(QObject):
         self.interrupted = False
 
     def __repr__(self) -> str:
-        return utils.get_repr(self, title=self.title, text=self.text,
-                              mode=self.mode, default=self.default,
-                              option=self.option)
+        return utils.get_repr(
+            self,
+            title=self.title,
+            text=self.text,
+            mode=self.mode,
+            default=self.default,
+            option=self.option,
+        )
 
     @pyqtSlot()
     def done(self) -> None:
@@ -437,7 +434,6 @@ class Question(QObject):
 
 
 class Timer(QTimer):
-
     """A timer which has a name to show in __repr__ and checks for overflows.
 
     Attributes:
@@ -469,7 +465,7 @@ class Timer(QTimer):
                 (
                     f"Timer {self._name} (id {self.timerId()}) triggered too early: "
                     f"interval {self.interval()} but only {elapsed:.3f}s passed"
-                )
+                ),
             )
 
     def check_timeout_validity(self) -> bool:
@@ -492,26 +488,24 @@ class Timer(QTimer):
 
     def setInterval(self, msec: int) -> None:
         """Extend setInterval to check for overflows."""
-        qtutils.check_overflow(msec, 'int')
+        qtutils.check_overflow(msec, "int")
         super().setInterval(msec)
 
     def start(self, msec: int = None) -> None:
         """Extend start to check for overflows."""
         self._start_time = time.monotonic()
         if msec is not None:
-            qtutils.check_overflow(msec, 'int')
+            qtutils.check_overflow(msec, "int")
             super().start(msec)
         else:
             super().start()
 
 
 class UndeferrableError(Exception):
-
     """An AbstractCertificateErrorWrapper isn't deferrable."""
 
 
 class AbstractCertificateErrorWrapper:
-
     """A wrapper over an SSL/certificate error."""
 
     def __init__(self) -> None:
@@ -527,7 +521,7 @@ class AbstractCertificateErrorWrapper:
         raise NotImplementedError
 
     def html(self) -> str:
-        return f'<p>{html.escape(str(self))}</p>'
+        return f"<p>{html.escape(str(self))}</p>"
 
     def accept_certificate(self) -> None:
         self._certificate_accepted = True
@@ -549,11 +543,9 @@ class AbstractCertificateErrorWrapper:
 
 @dataclasses.dataclass
 class NavigationRequest:
-
     """A request to navigate to the given URL."""
 
     class Type(enum.Enum):
-
         """The type of a request.
 
         Based on QWebEngineUrlRequestInfo::NavigationType and QWebPage::NavigationType.
