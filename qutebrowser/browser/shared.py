@@ -4,22 +4,30 @@
 
 """Various utilities shared between webpage/webview subclasses."""
 
+import enum
+import html
+import netrc
 import os
 import sys
-import html
-import enum
-import netrc
 import tempfile
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Optional
-from collections.abc import Mapping, Iterable, Iterator, Callable
-
-from qutebrowser.qt.core import QUrl, pyqtBoundSignal
 
 from qutebrowser.config import config, configtypes
-from qutebrowser.utils import (usertypes, message, log, objreg, jinja, utils,
-                               qtutils, version, urlutils)
 from qutebrowser.mainwindow import mainwindow
 from qutebrowser.misc import guiprocess, objects
+from qutebrowser.qt.core import QUrl, pyqtBoundSignal
+from qutebrowser.utils import (
+    jinja,
+    log,
+    message,
+    objreg,
+    qtutils,
+    urlutils,
+    usertypes,
+    utils,
+    version,
+)
 
 
 class CallSuper(Exception):
@@ -37,15 +45,15 @@ def custom_headers(
     """
     headers = {}
 
-    dnt_config = config.instance.get('content.headers.do_not_track', url=url)
+    dnt_config = config.instance.get("content.headers.do_not_track", url=url)
     if dnt_config is not None:
-        dnt = b'1' if dnt_config else b'0'
-        headers[b'DNT'] = dnt
+        dnt = b"1" if dnt_config else b"0"
+        headers[b"DNT"] = dnt
 
-    conf_headers = config.instance.get('content.headers.custom', url=url)
+    conf_headers = config.instance.get("content.headers.custom", url=url)
     for header, value in conf_headers.items():
-        encoded_header = header.encode('ascii')
-        encoded_value = b"" if value is None else value.encode('ascii')
+        encoded_header = header.encode("ascii")
+        encoded_value = b"" if value is None else value.encode("ascii")
         headers[encoded_header] = encoded_value
 
     # On QtWebEngine, we have fallback_accept_language set to False here for XHR
@@ -56,10 +64,11 @@ def custom_headers(
     # to take care of URL pattern overrides here.
     #
     # note: Once we drop QtWebKit, we could hardcode fallback_accept_language to False.
-    accept_language = config.instance.get('content.headers.accept_language',
-                                          url=url, fallback=fallback_accept_language)
+    accept_language = config.instance.get(
+        "content.headers.accept_language", url=url, fallback=fallback_accept_language
+    )
     if accept_language is not None and not isinstance(accept_language, usertypes.Unset):
-        headers[b'Accept-Language'] = accept_language.encode('ascii')
+        headers[b"Accept-Language"] = accept_language.encode("ascii")
 
     return sorted(headers.items())
 
@@ -68,15 +77,24 @@ def authentication_required(url, authenticator, abort_on):
     """Ask a prompt for an authentication question."""
     realm = authenticator.realm()
     if realm:
-        msg = '<b>{}</b> says:<br/>{}'.format(
-            html.escape(url.toDisplayString()), html.escape(realm))
+        msg = "<b>{}</b> says:<br/>{}".format(
+            html.escape(url.toDisplayString()), html.escape(realm)
+        )
     else:
-        msg = '<b>{}</b> needs authentication'.format(
-            html.escape(url.toDisplayString()))
-    urlstr = url.toString(QUrl.UrlFormattingOption.RemovePassword | QUrl.ComponentFormattingOption.FullyEncoded)
-    answer = message.ask(title="Authentication required", text=msg,
-                         mode=usertypes.PromptMode.user_pwd,
-                         abort_on=abort_on, url=urlstr)
+        msg = "<b>{}</b> needs authentication".format(
+            html.escape(url.toDisplayString())
+        )
+    urlstr = url.toString(
+        QUrl.UrlFormattingOption.RemovePassword
+        | QUrl.ComponentFormattingOption.FullyEncoded
+    )
+    answer = message.ask(
+        title="Authentication required",
+        text=msg,
+        mode=usertypes.PromptMode.user_pwd,
+        abort_on=abort_on,
+        url=urlstr,
+    )
     if answer is not None:
         authenticator.setUser(answer.user)
         authenticator.setPassword(answer.password)
@@ -85,7 +103,7 @@ def authentication_required(url, authenticator, abort_on):
 
 def _format_msg(msg: str) -> str:
     """Convert message to HTML suitable for rendering."""
-    return html.escape(msg).replace('\n', '<br />')
+    return html.escape(msg).replace("\n", "<br />")
 
 
 def javascript_confirm(url, js_msg, abort_on):
@@ -94,12 +112,20 @@ def javascript_confirm(url, js_msg, abort_on):
     if config.val.content.javascript.modal_dialog:
         raise CallSuper
 
-    msg = 'From <b>{}</b>:<br/>{}'.format(html.escape(url.toDisplayString()),
-                                          _format_msg(js_msg))
-    urlstr = url.toString(QUrl.UrlFormattingOption.RemovePassword | QUrl.ComponentFormattingOption.FullyEncoded)
-    ans = message.ask('Javascript confirm', msg,
-                      mode=usertypes.PromptMode.yesno,
-                      abort_on=abort_on, url=urlstr)
+    msg = "From <b>{}</b>:<br/>{}".format(
+        html.escape(url.toDisplayString()), _format_msg(js_msg)
+    )
+    urlstr = url.toString(
+        QUrl.UrlFormattingOption.RemovePassword
+        | QUrl.ComponentFormattingOption.FullyEncoded
+    )
+    ans = message.ask(
+        "Javascript confirm",
+        msg,
+        mode=usertypes.PromptMode.yesno,
+        abort_on=abort_on,
+        url=urlstr,
+    )
     return bool(ans)
 
 
@@ -111,13 +137,21 @@ def javascript_prompt(url, js_msg, default, abort_on):
     if not config.val.content.javascript.prompt:
         return (False, "")
 
-    msg = '<b>{}</b> asks:<br/>{}'.format(html.escape(url.toDisplayString()),
-                                          _format_msg(js_msg))
-    urlstr = url.toString(QUrl.UrlFormattingOption.RemovePassword | QUrl.ComponentFormattingOption.FullyEncoded)
-    answer = message.ask('Javascript prompt', msg,
-                         mode=usertypes.PromptMode.text,
-                         default=default,
-                         abort_on=abort_on, url=urlstr)
+    msg = "<b>{}</b> asks:<br/>{}".format(
+        html.escape(url.toDisplayString()), _format_msg(js_msg)
+    )
+    urlstr = url.toString(
+        QUrl.UrlFormattingOption.RemovePassword
+        | QUrl.ComponentFormattingOption.FullyEncoded
+    )
+    answer = message.ask(
+        "Javascript prompt",
+        msg,
+        mode=usertypes.PromptMode.text,
+        default=default,
+        abort_on=abort_on,
+        url=urlstr,
+    )
 
     if answer is None:
         return (False, "")
@@ -134,21 +168,30 @@ def javascript_alert(url, js_msg, abort_on):
     if not config.val.content.javascript.alert:
         return
 
-    msg = 'From <b>{}</b>:<br/>{}'.format(html.escape(url.toDisplayString()),
-                                          _format_msg(js_msg))
-    urlstr = url.toString(QUrl.UrlFormattingOption.RemovePassword | QUrl.ComponentFormattingOption.FullyEncoded)
-    message.ask('Javascript alert', msg, mode=usertypes.PromptMode.alert,
-                abort_on=abort_on, url=urlstr)
+    msg = "From <b>{}</b>:<br/>{}".format(
+        html.escape(url.toDisplayString()), _format_msg(js_msg)
+    )
+    urlstr = url.toString(
+        QUrl.UrlFormattingOption.RemovePassword
+        | QUrl.ComponentFormattingOption.FullyEncoded
+    )
+    message.ask(
+        "Javascript alert",
+        msg,
+        mode=usertypes.PromptMode.alert,
+        abort_on=abort_on,
+        url=urlstr,
+    )
 
 
 # Needs to line up with the values allowed for the
 # content.javascript.log setting.
 _JS_LOGMAP: Mapping[str, Callable[[str], None]] = {
-    'none': lambda arg: None,
-    'debug': log.js.debug,
-    'info': log.js.info,
-    'warning': log.js.warning,
-    'error': log.js.error,
+    "none": lambda arg: None,
+    "debug": log.js.debug,
+    "info": log.js.info,
+    "warning": log.js.warning,
+    "error": log.js.error,
 }
 # Callables to use for content.javascript.log_message.
 # Note that the keys are JS log levels here, not config settings!
@@ -172,8 +215,8 @@ def _js_log_to_ui(
         False otherwise.
     """
     logstring = f"[{source}:{line}] {msg}"
-    message_levels = config.cache['content.javascript.log_message.levels']
-    message_excludes = config.cache['content.javascript.log_message.excludes']
+    message_levels = config.cache["content.javascript.log_message.levels"]
+    message_excludes = config.cache["content.javascript.log_message.excludes"]
 
     match = utils.match_globs(message_levels, source)
     if match is None:
@@ -202,16 +245,16 @@ def javascript_log_message(
         return
 
     logstring = f"[{source}:{line}] {msg}"
-    logger = _JS_LOGMAP[config.cache['content.javascript.log'][level.name]]
+    logger = _JS_LOGMAP[config.cache["content.javascript.log"][level.name]]
     logger(logstring)
 
 
 def handle_certificate_error(
-        *,
-        request_url: QUrl,
-        first_party_url: QUrl,
-        error: usertypes.AbstractCertificateErrorWrapper,
-        abort_on: Iterable[pyqtBoundSignal],
+    *,
+    request_url: QUrl,
+    first_party_url: QUrl,
+    error: usertypes.AbstractCertificateErrorWrapper,
+    abort_on: Iterable[pyqtBoundSignal],
 ) -> None:
     """Display a certificate error question.
 
@@ -221,19 +264,20 @@ def handle_certificate_error(
         error: A single error.
         abort_on: Signals aborting a question.
     """
-    conf = config.instance.get('content.tls.certificate_errors', url=request_url)
+    conf = config.instance.get("content.tls.certificate_errors", url=request_url)
     log.network.debug(f"Certificate error {error!r}, config {conf}")
 
     assert error.is_overridable(), repr(error)
 
     # We get the first party URL with a heuristic - with HTTP -> HTTPS redirects, the
     # scheme might not match.
-    is_resource = (
-        first_party_url.isValid() and
-        not request_url.matches(first_party_url, urlutils.FormatOption.REMOVE_SCHEME))
+    is_resource = first_party_url.isValid() and not request_url.matches(
+        first_party_url, urlutils.FormatOption.REMOVE_SCHEME
+    )
 
-    if conf == 'ask' or conf == 'ask-block-thirdparty' and not is_resource:
-        err_template = jinja.environment.from_string("""
+    if conf == "ask" or conf == "ask-block-thirdparty" and not is_resource:
+        err_template = jinja.environment.from_string(
+            """
             {% if is_resource %}
             <p>
                 Error while loading resource <b>{{request_url.toDisplayString()}}</b><br/>
@@ -252,7 +296,8 @@ def handle_certificate_error(
             {% endif %}
 
             Do you want to ignore these errors and continue loading the page <b>insecurely</b>?
-        """.strip())
+        """.strip()
+        )
         msg = err_template.render(
             request_url=request_url,
             first_party_url=first_party_url,
@@ -260,7 +305,8 @@ def handle_certificate_error(
             error=error,
         )
         urlstr = request_url.toString(
-            urlutils.FormatOption.REMOVE_PASSWORD | urlutils.FormatOption.ENCODED)
+            urlutils.FormatOption.REMOVE_PASSWORD | urlutils.FormatOption.ENCODED
+        )
         title = "Certificate error"
 
         try:
@@ -268,15 +314,21 @@ def handle_certificate_error(
         except usertypes.UndeferrableError:
             # QtNetwork / QtWebKit and buggy PyQt versions
             # Show blocking question prompt
-            ignore = message.ask(title=title, text=msg,
-                                 mode=usertypes.PromptMode.yesno, default=False,
-                                 abort_on=abort_on, url=urlstr)
+            ignore = message.ask(
+                title=title,
+                text=msg,
+                mode=usertypes.PromptMode.yesno,
+                default=False,
+                abort_on=abort_on,
+                url=urlstr,
+            )
             if ignore:
                 error.accept_certificate()
             else:  # includes None, i.e. prompt aborted
                 error.reject_certificate()
         else:
             # Show non-blocking question prompt
+            message.error(f"Certificate error: {error}")
             message.confirm_async(
                 title=title,
                 text=msg,
@@ -286,23 +338,25 @@ def handle_certificate_error(
                 no_action=error.reject_certificate,
                 cancel_action=error.reject_certificate,
             )
-    elif conf == 'load-insecurely':
-        message.error(f'Certificate error: {error}')
+    elif conf == "load-insecurely":
+        message.error(f"Certificate error: {error}")
         error.accept_certificate()
-    elif conf == 'block':
+    elif conf == "block":
         error.reject_certificate()
-    elif conf == 'ask-block-thirdparty' and is_resource:
+    elif conf == "ask-block-thirdparty" and is_resource:
         log.network.error(
             f"Certificate error in resource load: {error}\n"
             f"  request URL:     {request_url.toDisplayString()}\n"
-            f"  first party URL: {first_party_url.toDisplayString()}")
+            f"  first party URL: {first_party_url.toDisplayString()}"
+        )
         error.reject_certificate()
     else:
         raise utils.Unreachable(conf, is_resource)
 
 
-def feature_permission(url, option, msg, yes_action, no_action, abort_on,
-                       blocking=False):
+def feature_permission(
+    url, option, msg, yes_action, no_action, abort_on, blocking=False
+):
     """Handle a feature permission request.
 
     Args:
@@ -320,20 +374,29 @@ def feature_permission(url, option, msg, yes_action, no_action, abort_on,
     """
     config_val = config.instance.get(option, url=url)
     opt = config.instance.get_opt(option)
-    if config_val == 'ask':
+    if config_val == "ask":
         if url.isValid():
-            urlstr = url.toString(QUrl.UrlFormattingOption.RemovePassword | QUrl.ComponentFormattingOption.FullyEncoded)
+            urlstr = url.toString(
+                QUrl.UrlFormattingOption.RemovePassword
+                | QUrl.ComponentFormattingOption.FullyEncoded
+            )
             text = "Allow the website at <b>{}</b> to {}?".format(
-                html.escape(url.toDisplayString()), msg)
+                html.escape(url.toDisplayString()), msg
+            )
         else:
             urlstr = None
             option = None  # For message.ask/confirm_async
             text = "Allow the website to {}?".format(msg)
 
         if blocking:
-            answer = message.ask(abort_on=abort_on, title='Permission request',
-                                 text=text, url=urlstr, option=option,
-                                 mode=usertypes.PromptMode.yesno)
+            answer = message.ask(
+                abort_on=abort_on,
+                title="Permission request",
+                text=text,
+                url=urlstr,
+                option=option,
+                mode=usertypes.PromptMode.yesno,
+            )
             if answer:
                 yes_action()
             else:
@@ -341,10 +404,15 @@ def feature_permission(url, option, msg, yes_action, no_action, abort_on,
             return None
         else:
             return message.confirm_async(
-                yes_action=yes_action, no_action=no_action,
-                cancel_action=no_action, abort_on=abort_on,
-                title='Permission request', text=text, url=urlstr,
-                option=option)
+                yes_action=yes_action,
+                no_action=no_action,
+                cancel_action=no_action,
+                abort_on=abort_on,
+                title="Permission request",
+                text=text,
+                url=urlstr,
+                option=option,
+            )
 
     if isinstance(opt.typ, configtypes.AsBool):
         config_val = opt.typ.to_bool(config_val)
@@ -369,7 +437,7 @@ def get_tab(win_id, target):
         win_id: The window ID to open new tabs in
         target: A usertypes.ClickTarget
     """
-    tabbed_browser = objreg.get('tabbed-browser', scope='window', window=win_id)
+    tabbed_browser = objreg.get("tabbed-browser", scope="window", window=win_id)
     if target == usertypes.ClickTarget.window:
         window = mainwindow.MainWindow(private=tabbed_browser.is_private)
         tab = window.tabbed_browser.tabopen(url=None, background=False)
@@ -386,30 +454,34 @@ def get_tab(win_id, target):
 
 def get_user_stylesheet(searching=False):
     """Get the combined user-stylesheet."""
-    css = ''
+    css = ""
     stylesheets = config.val.content.user_stylesheets
 
     for filename in stylesheets:
-        with open(filename, 'r', encoding='utf-8') as f:
+        with open(filename, "r", encoding="utf-8") as f:
             css += f.read()
 
     setting = config.val.scrolling.bar
-    if setting == 'overlay' and utils.is_mac:
-        setting = 'when-searching'
+    if setting == "overlay" and utils.is_mac:
+        setting = "when-searching"
 
-    if setting == 'never' or setting == 'when-searching' and not searching:
-        css += '\nhtml > ::-webkit-scrollbar { width: 0px; height: 0px; }'
+    if setting == "never" or setting == "when-searching" and not searching:
+        css += "\nhtml > ::-webkit-scrollbar { width: 0px; height: 0px; }"
 
-    if (objects.backend == usertypes.Backend.QtWebEngine and
-            version.qtwebengine_versions().chromium_major in [87, 90] and
-            config.val.colors.webpage.darkmode.enabled and
-            config.val.colors.webpage.darkmode.policy.images == 'smart' and
-            config.val.content.site_specific_quirks.enabled and
-            'misc-mathml-darkmode' not in config.val.content.site_specific_quirks.skip):
+    if (
+        objects.backend == usertypes.Backend.QtWebEngine
+        and version.qtwebengine_versions().chromium_major in [87, 90]
+        and config.val.colors.webpage.darkmode.enabled
+        and config.val.colors.webpage.darkmode.policy.images == "smart"
+        and config.val.content.site_specific_quirks.enabled
+        and "misc-mathml-darkmode" not in config.val.content.site_specific_quirks.skip
+    ):
         # WORKAROUND for MathML-output on Wikipedia being black on black.
         # See https://bugs.chromium.org/p/chromium/issues/detail?id=1126606
-        css += ('\nimg.mwe-math-fallback-image-inline, '
-                'img.mwe-math-fallback-image-display { filter: invert(100%); }')
+        css += (
+            "\nimg.mwe-math-fallback-image-inline, "
+            "img.mwe-math-fallback-image-display { filter: invert(100%); }"
+        )
 
     return css
 
@@ -425,7 +497,7 @@ def netrc_authentication(url, authenticator):
         True if netrc found credentials for the URL.
         False otherwise.
     """
-    if 'HOME' not in os.environ:
+    if "HOME" not in os.environ:
         # We'll get an OSError by netrc if 'HOME' isn't available in
         # os.environ. We don't want to log that, so we prevent it
         # altogether.
@@ -439,8 +511,7 @@ def netrc_authentication(url, authenticator):
         net = netrc.netrc(config.val.content.netrc_file)
 
         if url.port() != -1:
-            authenticators = net.authenticators(
-                "{}:{}".format(url.host(), url.port()))
+            authenticators = net.authenticators("{}:{}".format(url.host(), url.port()))
 
         if not authenticators:
             authenticators = net.authenticators(url.host())
@@ -486,18 +557,17 @@ def choose_file(qb_mode: FileSelectionMode) -> list[str]:
         FileSelectionMode.multiple_files: config.val.fileselect.multiple_files.command,
         FileSelectionMode.folder: config.val.fileselect.folder.command,
     }[qb_mode]
-    use_tmp_file = any('{}' in arg for arg in command[1:])
+    use_tmp_file = any("{}" in arg for arg in command[1:])
     if use_tmp_file:
         with tempfile.NamedTemporaryFile(
-            prefix='qutebrowser-fileselect-',
+            prefix="qutebrowser-fileselect-",
             delete=False,
         ) as handle:
             tmpfilename = handle.name
         with utils.cleanup_file(tmpfilename):
-            command = (
-                command[:1] +
-                [arg.replace('{}', tmpfilename) for arg in command[1:]]
-            )
+            command = command[:1] + [
+                arg.replace("{}", tmpfilename) for arg in command[1:]
+            ]
             return _execute_fileselect_command(
                 command=command,
                 qb_mode=qb_mode,
@@ -511,9 +581,7 @@ def choose_file(qb_mode: FileSelectionMode) -> list[str]:
 
 
 def _execute_fileselect_command(
-    command: list[str],
-    qb_mode: FileSelectionMode,
-    tmpfilename: Optional[str] = None
+    command: list[str], qb_mode: FileSelectionMode, tmpfilename: Optional[str] = None
 ) -> list[str]:
     """Execute external command to choose file.
 
@@ -525,7 +593,7 @@ def _execute_fileselect_command(
         A list of selected file paths, or empty list if no file is selected.
         If multiple is False, the return value will have at most 1 item.
     """
-    proc = guiprocess.GUIProcess(what='choose-file')
+    proc = guiprocess.GUIProcess(what="choose-file")
     proc.start(command[0], command[1:])
 
     loop = qtutils.EventLoop()
@@ -536,14 +604,15 @@ def _execute_fileselect_command(
         selected_files = proc.stdout.splitlines()
     else:
         try:
-            with open(tmpfilename, mode='r', encoding=sys.getfilesystemencoding()) as f:
+            with open(tmpfilename, mode="r", encoding=sys.getfilesystemencoding()) as f:
                 selected_files = f.read().splitlines()
         except OSError as e:
             message.error(f"Failed to open tempfile {tmpfilename} ({e})!")
             selected_files = []
 
-    return list(_validated_selected_files(
-        qb_mode=qb_mode, selected_files=selected_files))
+    return list(
+        _validated_selected_files(qb_mode=qb_mode, selected_files=selected_files)
+    )
 
 
 def _validated_selected_files(

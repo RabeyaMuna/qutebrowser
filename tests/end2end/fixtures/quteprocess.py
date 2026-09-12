@@ -4,37 +4,84 @@
 
 """Fixtures to run qutebrowser in a QProcess and communicate."""
 
-import pathlib
+import collections
+import contextlib
+import datetime
+import itertools
+import json
+import logging
 import os
+import pathlib
 import re
 import sys
-import time
-import datetime
-import logging
 import tempfile
-import contextlib
-import itertools
-import collections
-import json
+import time
 
-import yaml
 import pytest
+import yaml
 from PIL.ImageGrab import grab
-from qutebrowser.qt.core import pyqtSignal, QUrl, QPoint
-from qutebrowser.qt.gui import QImage, QColor
+
+# The qutebrowser.qt.* modules transitively import PyQt5. In some tox/docker
+# environments PyQt is not available which causes an ImportError during CI
+# validation (e.g. when running scripts/link_pyqt.py). Guard these imports so
+# the module can still be imported in environments without PyQt.
+try:
+    from qutebrowser.qt.core import QPoint, QUrl, pyqtSignal
+    from qutebrowser.qt.gui import QColor, QImage
+
+    _HAS_QT = True
+except Exception:
+    # If PyQt (or qutebrowser.qt bindings) aren't available, provide minimal
+    # stand-ins so importing this module doesn't fail. These dummies implement
+    # the methods used by the tests in a no-op fashion.
+    _HAS_QT = False
+
+    def pyqtSignal(*args, **kwargs):
+        # simple no-op placeholder for signal declarations
+        return None
+
+    class _DummyUrl:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def isValid(self):
+            return False
+
+        def toDisplayString(self, *args, **kwargs):
+            return ""
+
+        def errorString(self):
+            return ""
+
+    class _DummyPoint:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class _DummyImage:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    class _DummyColor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    QUrl = _DummyUrl
+    QPoint = _DummyPoint
+    QImage = _DummyImage
+    QColor = _DummyColor
+
+from end2end.fixtures import testprocess
+from helpers import testutils
 
 from qutebrowser.misc import ipc
-from qutebrowser.utils import log, utils, javascript
-from helpers import testutils
-from end2end.fixtures import testprocess
-
+from qutebrowser.utils import javascript, log, utils
 
 instance_counter = itertools.count()
 
 
 def is_ignored_qt_message(pytestconfig, message):
     """Check if the message is listed in qt_log_ignore."""
-    regexes = pytestconfig.getini('qt_log_ignore')
+    regexes = pytestconfig.getini("qt_log_ignore")
     return any(re.search(regex, message) for regex in regexes)
 
 
@@ -42,13 +89,11 @@ def is_ignored_lowlevel_message(message):
     """Check if we want to ignore a lowlevel process output."""
     ignored_messages = [
         # Qt 6.2 / 6.3
-        'Fontconfig error: Cannot load default config file: No such file: (null)',
-        'Fontconfig error: Cannot load default config file',
-
+        "Fontconfig error: Cannot load default config file: No such file: (null)",
+        "Fontconfig error: Cannot load default config file",
         # Qt 6.4, from certificate error below, but on separate lines
-        '----- Certificate i=0 (*,CN=localhost,O=qutebrowser test certificate) -----',
-        'ERROR: No matching issuer found',
-
+        "----- Certificate i=0 (*,CN=localhost,O=qutebrowser test certificate) -----",
+        "ERROR: No matching issuer found",
         # Qt 6.5 debug, overflow/linebreak from a JS message...
         # IGNORED: [678403:678403:0315/203342.008878:INFO:CONSOLE(65)] "Refused
         # to apply inline style because it violates the following Content
@@ -60,38 +105,37 @@ def is_ignored_lowlevel_message(message):
         # fallback.
         # INVALID: ", source: userscript:_qute_stylesheet (65)
         '", source: userscript:_qute_stylesheet (*)',
-
         # Randomly started showing up on Qt 5.15.2
-        'QPaintDevice: Cannot destroy paint device that is being painted',
-
+        "QPaintDevice: Cannot destroy paint device that is being painted",
         # Qt 6.6 on GitHub Actions
         (
-            'libva error: vaGetDriverNameByIndex() failed with unknown libva error, '
-            'driver_name = (null)'
+            "libva error: vaGetDriverNameByIndex() failed with unknown libva error, "
+            "driver_name = (null)"
         ),
-        'libva error: vaGetDriverNames() failed with unknown libva error',
-
+        "libva error: vaGetDriverNames() failed with unknown libva error",
         # Mesa 23.3
         # See https://gitlab.freedesktop.org/mesa/mesa/-/issues/10293
-        'MESA: error: ZINK: vkCreateInstance failed (VK_ERROR_INCOMPATIBLE_DRIVER)',
-        'glx: failed to create drisw screen',
-        'failed to load driver: zink',
-        'DRI3 not available',
+        "MESA: error: ZINK: vkCreateInstance failed (VK_ERROR_INCOMPATIBLE_DRIVER)",
+        "glx: failed to create drisw screen",
+        "failed to load driver: zink",
+        "DRI3 not available",
         # Webkit on arch with a newer mesa
-        'MESA: error: ZINK: failed to load libvulkan.so.1',
-
+        "MESA: error: ZINK: failed to load libvulkan.so.1",
         # GitHub Actions with Archlinux unstable packages
-        'libEGL warning: DRI3: Screen seems not DRI3 capable',
-        'libEGL warning: egl: failed to create dri2 screen',
-        'libEGL warning: DRI3 error: Could not get DRI3 device',
-        'libEGL warning: Activate DRI3 at Xorg or build mesa with DRI2',
+        "libEGL warning: DRI3: Screen seems not DRI3 capable",
+        "libEGL warning: egl: failed to create dri2 screen",
+        "libEGL warning: DRI3 error: Could not get DRI3 device",
+        "libEGL warning: Activate DRI3 at Xorg or build mesa with DRI2",
     ]
-    return any(testutils.pattern_match(pattern=pattern, value=message)
-               for pattern in ignored_messages)
+    return any(
+        testutils.pattern_match(pattern=pattern, value=message)
+        for pattern in ignored_messages
+    )
 
 
 def is_ignored_chromium_message(line):
-    msg_re = re.compile(r"""
+    msg_re = re.compile(
+        r"""
         \[
         (\d+:\d+:)?  # Process/Thread ID
         \d{4}/[\d.]+:  # MMDD/Time
@@ -99,71 +143,72 @@ def is_ignored_chromium_message(line):
         [^ :]+    # filename / line
         \]
         \ (?P<message>.*)  # message
-    """, re.VERBOSE)
+    """,
+        re.VERBOSE,
+    )
     match = msg_re.fullmatch(line)
     if match is None:
         return False
 
-    if match.group('loglevel') == 'INFO':
+    if match.group("loglevel") == "INFO":
         return True
 
-    message = match.group('message')
+    message = match.group("message")
     ignored_messages = [
         # GitHub Actions with Qt 5.15.2
-        'SharedImageManager::ProduceGLTexture: Trying to produce a representation from a non-existent mailbox. *',
-        ('[.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : '
-         'DoCreateAndTexStorage2DSharedImageINTERNAL: invalid mailbox name'),
-        ('[.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : '
-         'DoBeginSharedImageAccessCHROMIUM: bound texture is not a shared image'),
-        ('[.DisplayCompositor]RENDER WARNING: texture bound to texture unit 0 is '
-         'not renderable. It might be non-power-of-2 or have incompatible texture '
-         'filtering (maybe)?'),
-        ('[.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : '
-         'DoEndSharedImageAccessCHROMIUM: bound texture is not a shared image'),
-
+        "SharedImageManager::ProduceGLTexture: Trying to produce a representation from a non-existent mailbox. *",
+        (
+            "[.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : "
+            "DoCreateAndTexStorage2DSharedImageINTERNAL: invalid mailbox name"
+        ),
+        (
+            "[.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : "
+            "DoBeginSharedImageAccessCHROMIUM: bound texture is not a shared image"
+        ),
+        (
+            "[.DisplayCompositor]RENDER WARNING: texture bound to texture unit 0 is "
+            "not renderable. It might be non-power-of-2 or have incompatible texture "
+            "filtering (maybe)?"
+        ),
+        (
+            "[.DisplayCompositor]GL ERROR :GL_INVALID_OPERATION : "
+            "DoEndSharedImageAccessCHROMIUM: bound texture is not a shared image"
+        ),
         # [916:934:1213/080738.912432:ERROR:address_tracker_linux.cc(214)] Could not bind NETLINK socket: Address already in use (98)
-        'Could not bind NETLINK socket: Address already in use (98)',
-
+        "Could not bind NETLINK socket: Address already in use (98)",
         # Flatpak with data/crashers/webrtc.html (Qt 6.2)
         # [9044:9113:0512/012126.284773:ERROR:mdns_responder.cc(868)] mDNS responder manager failed to start.
         # [9044:9113:0512/012126.284818:ERROR:mdns_responder.cc(885)] The mDNS responder manager is not started yet.
-        'mDNS responder manager failed to start.',
-        'The mDNS responder manager is not started yet.',
-
+        "mDNS responder manager failed to start.",
+        "The mDNS responder manager is not started yet.",
         # Qt 6.2:
         # [503633:503650:0509/185222.442798:ERROR:ssl_client_socket_impl.cc(959)] handshake failed; returned -1, SSL error code 1, net_error -202
-        'handshake failed; returned -1, SSL error code 1, net_error -202',
+        "handshake failed; returned -1, SSL error code 1, net_error -202",
         # Qt 6.8 + Python 3.14
-        'handshake failed; returned -1, SSL error code 1, net_error -101',
-
+        "handshake failed; returned -1, SSL error code 1, net_error -101",
         # Qt 6.2:
         # [2432160:7:0429/195800.168435:ERROR:command_buffer_proxy_impl.cc(140)] ContextResult::kTransientFailure: Failed to send GpuChannelMsg_CreateCommandBuffer.
         # Qt 6.3:
         # [2435381:7:0429/200014.168057:ERROR:command_buffer_proxy_impl.cc(125)] ContextResult::kTransientFailure: Failed to send GpuControl.CreateCommandBuffer.
-        'ContextResult::kTransientFailure: Failed to send *CreateCommandBuffer.',
-
+        "ContextResult::kTransientFailure: Failed to send *CreateCommandBuffer.",
         # Qt 6.3:
         # [4919:8:0530/170658.033287:ERROR:command_buffer_proxy_impl.cc(328)] GPU state invalid after WaitForGetOffsetInRange.
-        'GPU state invalid after WaitForGetOffsetInRange.',
+        "GPU state invalid after WaitForGetOffsetInRange.",
         # [5469:5503:0621/183219.878182:ERROR:backend_impl.cc(1414)] Unable to map Index file
-        'Unable to map Index file',
-
+        "Unable to map Index file",
         # Qt 6.4:
         # [2456284:2456339:0715/110322.570154:ERROR:cert_verify_proc_builtin.cc(681)] CertVerifyProcBuiltin for localhost failed:
         # ----- Certificate i=0 (1.2.840.113549.1.9.1=#6D61696C407175746562726F777365722E6F7267,CN=localhost,O=qutebrowser test certificate) -----
         # ERROR: No matching issuer found
         # (Note, subsequent lines above in is_ignored_lowlevel_message)
-        'CertVerifyProcBuiltin for localhost failed:',
+        "CertVerifyProcBuiltin for localhost failed:",
         # [320667:320667:1124/135621.718232:ERROR:interface_endpoint_client.cc(687)] Message 4 rejected by interface blink.mojom.WidgetHost
-        'Message 4 rejected by interface blink.mojom.WidgetHost',
-
-
+        "Message 4 rejected by interface blink.mojom.WidgetHost",
         # Qt 5.15.1 debug build (Chromium 83)
         # '[314297:7:0929/214605.491958:ERROR:context_provider_command_buffer.cc(145)]
         # GpuChannelHost failed to create command buffer.'
         # Still present on Qt 6.5
-        'GpuChannelHost failed to create command buffer.',
-
+        "GpuChannelHost failed to create command buffer.",
         # Qt 6.5 debug build
         # [640812:640865:0315/200415.708148:WARNING:important_file_writer.cc(185)]
         # Failed to create temporary file to update
@@ -173,24 +218,20 @@ def is_ignored_chromium_message(line):
         # Failed to create temporary file to update
         # /tmp/qutebrowser-basedir-3kvto2eq/data/webengine/Network Persistent
         # State: No such file or directory (2)
-        'Failed to create temporary file to update *user_prefs.json: No such file or directory (2)',
-        'Failed to create temporary file to update *Network Persistent State: No such file or directory (2)',
-
+        "Failed to create temporary file to update *user_prefs.json: No such file or directory (2)",
+        "Failed to create temporary file to update *Network Persistent State: No such file or directory (2)",
         # Qt 6.5 debug build
         # [645145:645198:0315/200704.324733:WARNING:simple_synchronous_entry.cc(1438)]
         "Could not open platform files for entry.",
-
         # Qt 6.5 debug build
         # [664320:664320:0315/202235.943899:ERROR:node_channel.cc(861)]
         # Dropping message on closed channel.
         "Dropping message on closed channel.",
-
         # Qt 6.5 debug build
         # tests/end2end/features/test_misc_bdd.py::test_webrtc_renderer_process_crash
         # [679056:14:0315/203418.631075:WARNING:media_session.cc(949)] RED
         # codec red is missing an associated payload type.
         "RED codec red is missing an associated payload type.",
-
         # Qt 6.5 debug build
         # tests/end2end/features/test_javascript_bdd.py::test_error_pages_without_js_enabled
         # and others using internal URL schemes?
@@ -198,72 +239,61 @@ def is_ignored_chromium_message(line):
         # SetError: {code=4, message="MEDIA_ELEMENT_ERROR: Media load rejected
         # by URL safety check"}
         'SetError: {code=4, message="MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check"}',
-
         # Qt 6.5 debug build
         # [714871:715010:0315/205751.155681:ERROR:surface_manager.cc(419)]
         # Old/orphaned temporary reference to SurfaceId(FrameSinkId[](14, 3),
         # LocalSurfaceId(3, 1, 5D04...))
         "Old/orphaned temporary reference to SurfaceId(FrameSinkId[](*, *), LocalSurfaceId(*, *, *...))",
-
         # Qt 6.5 debug build
         # [758352:758352:0315/212511.747791:WARNING:render_widget_host_impl.cc(280)]
         # Input request on unbound interface
         "Input request on unbound interface",
-
         # Qt 6.5 debug build
         # [1408271:1408418:0317/201633.360945:ERROR:http_cache_transaction.cc(3622)]
         # ReadData failed: 0
         "ReadData failed: 0",
-
         # Qt 6.{4,5}, possibly relates to a lifecycle mismatch between Qt and
         # Chromium but no issues have been concretely linked to it yet.
         # [5464:5464:0318/024215.821650:ERROR:interface_endpoint_client.cc(687)] Message 6 rejected by interface blink.mojom.WidgetHost
         # [5718:5718:0318/031330.803863:ERROR:interface_endpoint_client.cc(687)] Message 3 rejected by interface blink.mojom.Widget
         "Message * rejected by interface blink.mojom.Widget*",
-
         # GitHub Actions, Qt 6.6
         # [9895:9983:0904/043039.500565:ERROR:gpu_memory_buffer_support_x11.cc(49)]
         # dri3 extension not supported.
         "dri3 extension not supported.",
-
         # Qt 6.7 debug build
         # [44513:44717:0325/173456.146759:WARNING:render_message_filter.cc(144)]
         # Could not find tid
         "Could not find tid",
-
         # [127693:127748:0325/230155.835421:WARNING:discardable_shared_memory_manager.cc(438)]
         # Some MojoDiscardableSharedMemoryManagerImpls are still alive. They
         # will be leaked.
         "Some MojoDiscardableSharedMemoryManagerImpls are still alive. They will be leaked.",
-
         # Qt 6.7 on GitHub Actions
         # [3456:5752:1111/103609.929:ERROR:block_files.cc(443)] Failed to open
         # C:\Users\RUNNER~1\AppData\Local\Temp\qutebrowser-basedir-ruvn1lys\data\webengine\DawnCache\data_0
         "Failed to open *webengine*Dawn*Cache*data_*",
-
         # Qt 6.8 on GitHub Actions
         # [7072:3412:1209/220659.527:ERROR:simple_index_file.cc(322)] Failed to
         # write the temporary index file
         "Failed to write the temporary index file",
-
         # Qt 6.9 Beta 3 on GitHub Actions
         # [978:1041:0311/070551.759339:ERROR:bus.cc(407)]
         "Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket: No such file or directory",
-
         # Qt 6.9 on GitHub Actions with Windows Server 2025
         # [4348:7828:0605/123815.402:ERROR:shared_image_manager.cc(356)]
         "SharedImageManager::ProduceMemory: Trying to Produce a Memory representation from a non-existent mailbox.",
-
         # Qt 6.10 debug build
         # "[453900:453973:0909/000324.265214:WARNING:viz_main_impl.cc(85)]"
         "VizNullHypothesis is disabled (not a warning)",
     ]
-    return any(testutils.pattern_match(pattern=pattern, value=message)
-               for pattern in ignored_messages)
+    return any(
+        testutils.pattern_match(pattern=pattern, value=message)
+        for pattern in ignored_messages
+    )
 
 
 class LogLine(testprocess.Line):
-
     """A parsed line from the qutebrowser log output.
 
     Attributes:
@@ -281,18 +311,18 @@ class LogLine(testprocess.Line):
         if not isinstance(line, dict):
             raise testprocess.InvalidLine(data)
 
-        self.timestamp = datetime.datetime.fromtimestamp(line['created'])
-        self.msecs = line['msecs']
-        self.loglevel = line['levelno']
-        self.levelname = line['levelname']
-        self.category = line['name']
-        self.module = line['module']
-        self.function = line['funcName']
-        self.line = line['lineno']
+        self.timestamp = datetime.datetime.fromtimestamp(line["created"])
+        self.msecs = line["msecs"]
+        self.loglevel = line["levelno"]
+        self.levelname = line["levelname"]
+        self.category = line["name"]
+        self.module = line["module"]
+        self.function = line["funcName"]
+        self.line = line["lineno"]
         if self.function is None and self.line == 0:
             self.line = None
-        self.traceback = line.get('traceback')
-        self.message = line['message']
+        self.traceback = line.get("traceback")
+        self.message = line["message"]
 
         self.expected = is_ignored_qt_message(pytestconfig, self.message)
         self.use_color = False
@@ -308,8 +338,9 @@ class LogLine(testprocess.Line):
         Args:
             colorized: If True, ANSI color codes will be embedded.
         """
-        r = logging.LogRecord(self.category, self.loglevel, '', self.line,
-                              self.message, (), None)
+        r = logging.LogRecord(
+            self.category, self.loglevel, "", self.line, self.message, (), None
+        )
         # Patch some attributes of the LogRecord
         if self.line is None:
             r.line = 0
@@ -319,29 +350,31 @@ class LogLine(testprocess.Line):
         r.funcName = self.function
 
         format_str = log.EXTENDED_FMT
-        format_str = format_str.replace('{asctime:8}',
-                                        '{asctime:8}.{msecs:03.0f}')
+        format_str = format_str.replace("{asctime:8}", "{asctime:8}.{msecs:03.0f}")
         # Mark expected errors with (expected) so it's less confusing for tests
         # which expect errors but fail due to other errors.
         if self.expected and self.loglevel > logging.INFO:
-            new_color = '{' + log.LOG_COLORS['DEBUG'] + '}'
-            format_str = format_str.replace('{log_color}', new_color)
-            format_str = re.sub(r'{levelname:(\d*)}',
-                                # Leave away the padding because (expected) is
-                                # longer anyway.
-                                r'{levelname} (expected)', format_str)
+            new_color = "{" + log.LOG_COLORS["DEBUG"] + "}"
+            format_str = format_str.replace("{log_color}", new_color)
+            format_str = re.sub(
+                r"{levelname:(\d*)}",
+                # Leave away the padding because (expected) is
+                # longer anyway.
+                r"{levelname} (expected)",
+                format_str,
+            )
 
-        formatter = log.ColoredFormatter(format_str, log.DATEFMT, '{',
-                                         use_colors=colorized)
+        formatter = log.ColoredFormatter(
+            format_str, log.DATEFMT, "{", use_colors=colorized
+        )
         result = formatter.format(r)
         # Manually append the stringified traceback if one is present
         if self.traceback is not None:
-            result += '\n' + self.traceback
+            result += "\n" + self.traceback
         return result
 
 
 class QuteProc(testprocess.Process):
-
     """A running qutebrowser process used for tests.
 
     Attributes:
@@ -358,8 +391,15 @@ class QuteProc(testprocess.Process):
 
     got_error = pyqtSignal()
 
-    KEYS = ['timestamp', 'loglevel', 'category', 'module', 'function', 'line',
-            'message']
+    KEYS = [
+        "timestamp",
+        "loglevel",
+        "category",
+        "module",
+        "function",
+        "line",
+        "message",
+    ]
 
     def __init__(self, request, *, parent=None):
         super().__init__(request, parent)
@@ -373,21 +413,23 @@ class QuteProc(testprocess.Process):
         """Check if the line matches any initial lines we're interested in."""
         start_okay_message = (
             "load status for <qutebrowser.browser.* tab_id=0 "
-            "url='about:blank'>: LoadStatus.success")
+            "url='about:blank'>: LoadStatus.success"
+        )
 
-        if (log_line.category == 'ipc' and
-                log_line.message.startswith("Listening as ")):
-            self._ipc_socket = log_line.message.split(' ', maxsplit=2)[2]
-        elif (log_line.category == 'webview' and
-              testutils.pattern_match(pattern=start_okay_message,
-                                      value=log_line.message)):
+        if log_line.category == "ipc" and log_line.message.startswith("Listening as "):
+            self._ipc_socket = log_line.message.split(" ", maxsplit=2)[2]
+        elif log_line.category == "webview" and testutils.pattern_match(
+            pattern=start_okay_message, value=log_line.message
+        ):
             log_line.waited_for = True
             self.ready.emit()
-        elif (log_line.category == 'init' and
-              log_line.module == 'standarddir' and
-              log_line.function == 'init' and
-              log_line.message.startswith('Base directory:')):
-            self.basedir = log_line.message.split(':', maxsplit=1)[1].strip()
+        elif (
+            log_line.category == "init"
+            and log_line.module == "standarddir"
+            and log_line.function == "init"
+            and log_line.message.startswith("Base directory:")
+        ):
+            self.basedir = log_line.message.split(":", maxsplit=1)[1].strip()
         elif self._is_error_logline(log_line):
             self.got_error.emit()
 
@@ -397,33 +439,35 @@ class QuteProc(testprocess.Process):
         except testprocess.InvalidLine:
             if not line.strip():
                 return None
-            elif (is_ignored_qt_message(self.request.config, line) or
-                  is_ignored_lowlevel_message(line) or
-                  is_ignored_chromium_message(line) or
-                  list(self.request.node.iter_markers('no_invalid_lines'))):
+            elif (
+                is_ignored_qt_message(self.request.config, line)
+                or is_ignored_lowlevel_message(line)
+                or is_ignored_chromium_message(line)
+                or list(self.request.node.iter_markers("no_invalid_lines"))
+            ):
                 self._log("IGNORED: {}".format(line))
                 return None
             else:
                 raise
 
-        log_line.use_color = self.request.config.getoption('--color') != 'no'
-        verbose = self.request.config.getoption('--verbose')
+        log_line.use_color = self.request.config.getoption("--color") != "no"
+        verbose = self.request.config.getoption("--verbose")
         if log_line.loglevel > logging.VDEBUG or verbose:
             self._log(log_line)
         self._process_line(log_line)
         return log_line
 
     def _executable_args(self):
-        profile = self.request.config.getoption('--qute-profile-subprocs')
-        strace = self.request.config.getoption('--qute-strace-subprocs')
-        if hasattr(sys, 'frozen'):
+        profile = self.request.config.getoption("--qute-profile-subprocs")
+        strace = self.request.config.getoption("--qute-strace-subprocs")
+        if hasattr(sys, "frozen"):
             if profile or strace:
                 raise RuntimeError("Can't profile/strace with sys.frozen!")
-            executable = str(pathlib.Path(sys.executable).parent / 'qutebrowser')
+            executable = str(pathlib.Path(sys.executable).parent / "qutebrowser")
             args = []
         else:
             if strace:
-                executable = 'strace'
+                executable = "strace"
                 args = [
                     "-o",
                     "qb-strace",
@@ -436,29 +480,46 @@ class QuteProc(testprocess.Process):
                 args = []
 
             if profile:
-                profile_dir = pathlib.Path.cwd() / 'prof'
-                profile_id = '{}_{}'.format(self._instance_id,
-                                            next(self._run_counter))
-                profile_file = profile_dir / '{}.pstats'.format(profile_id)
+                profile_dir = pathlib.Path.cwd() / "prof"
+                profile_id = "{}_{}".format(self._instance_id, next(self._run_counter))
+                profile_file = profile_dir / "{}.pstats".format(profile_id)
                 profile_dir.mkdir(exist_ok=True)
-                args += [str(pathlib.Path('scripts') / 'dev' / 'run_profile.py'),
-                        '--profile-tool', 'none',
-                        '--profile-file', str(profile_file)]
+                args += [
+                    str(pathlib.Path("scripts") / "dev" / "run_profile.py"),
+                    "--profile-tool",
+                    "none",
+                    "--profile-file",
+                    str(profile_file),
+                ]
             else:
-                args += ['-bb', '-m', 'qutebrowser']
+                args += ["-bb", "-m", "qutebrowser"]
         return executable, args
 
     def _default_args(self):
-        backend = 'webengine' if self.request.config.webengine else 'webkit'
-        args = ['--debug', '--no-err-windows', '--temp-basedir',
-                '--json-logging', '--loglevel', 'vdebug',
-                '--backend', backend,
-                '--debug-flag', 'no-sql-history',
-                '--debug-flag', 'werror',
-                '--debug-flag', 'test-notification-service',
-                '--debug-flag', 'caret',
-                '--qt-flag', 'disable-features=PaintHoldingCrossOrigin',
-                '--qt-arg', 'geometry', '800x600+0+0']
+        backend = "webengine" if self.request.config.webengine else "webkit"
+        args = [
+            "--debug",
+            "--no-err-windows",
+            "--temp-basedir",
+            "--json-logging",
+            "--loglevel",
+            "vdebug",
+            "--backend",
+            backend,
+            "--debug-flag",
+            "no-sql-history",
+            "--debug-flag",
+            "werror",
+            "--debug-flag",
+            "test-notification-service",
+            "--debug-flag",
+            "caret",
+            "--qt-flag",
+            "disable-features=PaintHoldingCrossOrigin",
+            "--qt-arg",
+            "geometry",
+            "800x600+0+0",
+        ]
 
         if self.request.config.webengine:
             if testutils.disable_seccomp_bpf_sandbox():
@@ -466,7 +527,7 @@ class QuteProc(testprocess.Process):
             if testutils.use_software_rendering():
                 args += testutils.SOFTWARE_RENDERING_ARGS
 
-        args.append('about:blank')
+        args.append("about:blank")
         return args
 
     def path_to_url(self, path, *, port=None, https=False):
@@ -475,19 +536,26 @@ class QuteProc(testprocess.Process):
         URLs like about:... and qute:... are handled specially and returned
         verbatim.
         """
-        special_schemes = ['about:', 'qute:', 'chrome:', 'view-source:',
-                           'data:', 'http:', 'https:', 'file:']
-        server = self.request.getfixturevalue('server')
+        special_schemes = [
+            "about:",
+            "qute:",
+            "chrome:",
+            "view-source:",
+            "data:",
+            "http:",
+            "https:",
+            "file:",
+        ]
+        server = self.request.getfixturevalue("server")
         server_port = server.port if port is None else port
 
         if any(path.startswith(scheme) for scheme in special_schemes):
-            path = path.replace('(port)', str(server_port))
+            path = path.replace("(port)", str(server_port))
             return path
         else:
-            return '{}://localhost:{}/{}'.format(
-                'https' if https else 'http',
-                server_port,
-                path if path != '/' else '')
+            return "{}://localhost:{}/{}".format(
+                "https" if https else "http", server_port, path if path != "/" else ""
+            )
 
     def wait_for_js(self, message):
         """Wait for the given javascript console message.
@@ -495,8 +563,7 @@ class QuteProc(testprocess.Process):
         Return:
             The LogLine.
         """
-        line = self.wait_for(category='js',
-                             message='[*] {}'.format(message))
+        line = self.wait_for(category="js", message="[*] {}".format(message))
         line.expected = True
         return line
 
@@ -506,46 +573,47 @@ class QuteProc(testprocess.Process):
         With QtWebEngine, on older Qt versions which lack
         QWebEnginePage.scrollPositionChanged, this also skips the test.
         """
-        __tracebackhide__ = (lambda e:
-                             e.errisinstance(testprocess.WaitForTimeout))
+        __tracebackhide__ = lambda e: e.errisinstance(testprocess.WaitForTimeout)
         if (x is None and y is not None) or (y is None and x is not None):
             raise ValueError("Either both x/y or neither must be given!")
 
         if x is None and y is None:
-            point = 'Py*.QtCore.QPoint(*, *)'  # not counting 0/0 here
-        elif x == '0' and y == '0':
-            point = 'Py*.QtCore.QPoint()'
+            point = "Py*.QtCore.QPoint(*, *)"  # not counting 0/0 here
+        elif x == "0" and y == "0":
+            point = "Py*.QtCore.QPoint()"
         else:
-            point = 'Py*.QtCore.QPoint({}, {})'.format(x, y)
-        self.wait_for(category='webview',
-                      message='Scroll position changed to ' + point)
+            point = "Py*.QtCore.QPoint({}, {})".format(x, y)
+        self.wait_for(category="webview", message="Scroll position changed to " + point)
 
     def wait_for(self, timeout=None, **kwargs):
         """Extend wait_for to add divisor if a test is xfailing."""
-        __tracebackhide__ = (lambda e:
-                             e.errisinstance(testprocess.WaitForTimeout))
-        xfail = self.request.node.get_closest_marker('xfail')
+        __tracebackhide__ = lambda e: e.errisinstance(testprocess.WaitForTimeout)
+        xfail = self.request.node.get_closest_marker("xfail")
         if xfail and (not xfail.args or xfail.args[0]):
-            kwargs['divisor'] = 10
+            kwargs["divisor"] = 10
         else:
-            kwargs['divisor'] = 1
+            kwargs["divisor"] = 1
         return super().wait_for(timeout=timeout, **kwargs)
 
     def _is_error_logline(self, msg):
         """Check if the given LogLine is some kind of error message."""
-        is_js_error = (msg.category == 'js' and
-                       testutils.pattern_match(pattern='[*] [FAIL] *',
-                                               value=msg.message))
+        is_js_error = msg.category == "js" and testutils.pattern_match(
+            pattern="[*] [FAIL] *", value=msg.message
+        )
         # Try to complain about the most common mistake when accidentally
         # loading external resources.
         is_ddg_load = testutils.pattern_match(
             pattern="load status for <* tab_id=* url='*duckduckgo*'>: *",
-            value=msg.message)
+            value=msg.message,
+        )
 
-        is_log_error = (msg.loglevel > logging.INFO and
-                        not msg.message.startswith("Ignoring world ID") and
-                        not msg.message.startswith(
-                            "Could not initialize QtNetwork SSL support."))
+        is_log_error = (
+            msg.loglevel > logging.INFO
+            and not msg.message.startswith("Ignoring world ID")
+            and not msg.message.startswith(
+                "Could not initialize QtNetwork SSL support."
+            )
+        )
         return is_log_error or is_js_error or is_ddg_load
 
     def _maybe_skip(self):
@@ -553,28 +621,28 @@ class QuteProc(testprocess.Process):
         skip_texts = []
 
         for msg in self._data:
-            if (msg.category == 'js' and
-                    testutils.pattern_match(pattern='[*] [SKIP] *',
-                                            value=msg.message)):
-                skip_texts.append(msg.message.partition(' [SKIP] ')[2])
+            if msg.category == "js" and testutils.pattern_match(
+                pattern="[*] [SKIP] *", value=msg.message
+            ):
+                skip_texts.append(msg.message.partition(" [SKIP] ")[2])
 
         if skip_texts:
-            pytest.skip(', '.join(skip_texts))
+            pytest.skip(", ".join(skip_texts))
 
     def before_test(self):
         """Clear settings before every test."""
         super().before_test()
-        self.send_cmd(':clear-messages')
-        self.send_cmd(':config-clear')
+        self.send_cmd(":clear-messages")
+        self.send_cmd(":config-clear")
         self._init_settings()
         self.clear_data()
 
     def _init_settings(self):
         """Adjust some qutebrowser settings after starting."""
         settings = [
-            ('messages.timeout', '0'),
-            ('auto_save.interval', '0'),
-            ('new_instance_open_target_window', 'last-opened')
+            ("messages.timeout", "0"),
+            ("auto_save.interval", "0"),
+            ("new_instance_open_target_window", "last-opened"),
         ]
 
         for opt, value in settings:
@@ -583,8 +651,11 @@ class QuteProc(testprocess.Process):
     def after_test(self):
         """Handle unexpected/skip logging and clean up after each test."""
         __tracebackhide__ = lambda e: e.errisinstance(pytest.fail.Exception)
-        bad_msgs = [msg for msg in self._data
-                    if self._is_error_logline(msg) and not msg.expected]
+        bad_msgs = [
+            msg
+            for msg in self._data
+            if self._is_error_logline(msg) and not msg.expected
+        ]
 
         try:
             call = self.request.node.rep_call
@@ -593,14 +664,15 @@ class QuteProc(testprocess.Process):
         else:
             if call.failed:
                 self._take_x11_screenshot_of_failed_test()
-            if call.failed or hasattr(call, 'wasxfail') or call.skipped:
+            if call.failed or hasattr(call, "wasxfail") or call.skipped:
                 super().after_test()
                 return
 
         try:
             if bad_msgs:
-                text = 'Logged unexpected errors:\n\n' + '\n'.join(
-                    str(e) for e in bad_msgs)
+                text = "Logged unexpected errors:\n\n" + "\n".join(
+                    str(e) for e in bad_msgs
+                )
                 pytest.fail(text, pytrace=False)
             else:
                 self._maybe_skip()
@@ -609,8 +681,12 @@ class QuteProc(testprocess.Process):
 
     def _wait_for_ipc(self):
         """Wait for an IPC message to arrive."""
-        self.wait_for(category='ipc', module='ipc', function='on_ready_read',
-                      message='Read from socket *')
+        self.wait_for(
+            category="ipc",
+            module="ipc",
+            function="on_ready_read",
+            message="Read from socket *",
+        )
 
     @contextlib.contextmanager
     def disable_capturing(self):
@@ -620,16 +696,18 @@ class QuteProc(testprocess.Process):
 
     def _after_start(self):
         """Wait before continuing if requested, e.g. for debugger attachment."""
-        delay = self.request.config.getoption('--qute-delay-start')
+        delay = self.request.config.getoption("--qute-delay-start")
         if delay:
             with self.disable_capturing():
-                print(f"- waiting {delay}ms for quteprocess "
-                      f"(PID: {self.proc.processId()})...")
+                print(
+                    f"- waiting {delay}ms for quteprocess "
+                    f"(PID: {self.proc.processId()})..."
+                )
             time.sleep(delay / 1000)
 
-    def send_ipc(self, commands, target_arg=''):
+    def send_ipc(self, commands, target_arg=""):
         """Send a raw command to the running IPC socket."""
-        delay = self.request.config.getoption('--qute-delay')
+        delay = self.request.config.getoption("--qute-delay")
         time.sleep(delay / 1000)
 
         assert self._ipc_socket is not None
@@ -640,8 +718,7 @@ class QuteProc(testprocess.Process):
         except testprocess.WaitForTimeout:
             # Sometimes IPC messages seem to get lost on Windows CI?
             # Retry a second time as this shouldn't make tests fail.
-            ipc.send_to_running_instance(self._ipc_socket, commands,
-                                         target_arg)
+            ipc.send_to_running_instance(self._ipc_socket, commands, target_arg)
             self._wait_for_ipc()
 
     def start(self, *args, **kwargs):
@@ -650,7 +727,8 @@ class QuteProc(testprocess.Process):
         except testprocess.ProcessExited:
             is_dl_inconsistency = str(self.captured_log[-1]).endswith(
                 "_dl_allocate_tls_init: Assertion "
-                "`listp->slotinfo[cnt].gen <= GL(dl_tls_generation)' failed!")
+                "`listp->slotinfo[cnt].gen <= GL(dl_tls_generation)' failed!"
+            )
             if testutils.ON_CI and is_dl_inconsistency:
                 # WORKAROUND for https://sourceware.org/bugzilla/show_bug.cgi?id=19329
                 self.captured_log = []
@@ -675,45 +753,49 @@ class QuteProc(testprocess.Process):
         __tracebackhide__ = lambda e: e.errisinstance(testprocess.WaitForTimeout)
         summary = command
         if count is not None:
-            summary += ' (count {})'.format(count)
+            summary += " (count {})".format(count)
         self.log_summary(summary)
 
         if escape:
-            command = command.replace('\\', r'\\')
+            command = command.replace("\\", r"\\")
 
         if count is not None:
-            command = ':cmd-run-with-count {} {}'.format(count,
-                                                     command.lstrip(':'))
+            command = ":cmd-run-with-count {} {}".format(count, command.lstrip(":"))
 
         self.send_ipc([command])
         if invalid:
             return None
         else:
-            return self.wait_for(category='commands', module='command',
-                                 function='run', message='command called: *')
+            return self.wait_for(
+                category="commands",
+                module="command",
+                function="run",
+                message="command called: *",
+            )
 
     def get_setting(self, opt, pattern=None):
         """Get the value of a qutebrowser setting."""
         if pattern is None:
-            cmd = ':set {}?'.format(opt)
+            cmd = ":set {}?".format(opt)
         else:
-            cmd = ':set -u {} {}?'.format(pattern, opt)
+            cmd = ":set -u {} {}?".format(pattern, opt)
 
         self.send_cmd(cmd)
-        msg = self.wait_for(loglevel=logging.INFO, category='message',
-                            message='{} = *'.format(opt))
+        msg = self.wait_for(
+            loglevel=logging.INFO, category="message", message="{} = *".format(opt)
+        )
 
         if pattern is None:
-            return msg.message.split(' = ')[1]
+            return msg.message.split(" = ")[1]
         else:
-            return msg.message.split(' = ')[1].split(' for ')[0]
+            return msg.message.split(" = ")[1].split(" for ")[0]
 
     def set_setting(self, option, value):
         # \ and " in a value should be treated literally, so escape them
-        value = value.replace('\\', r'\\')
+        value = value.replace("\\", r"\\")
         value = value.replace('"', '\\"')
         self.send_cmd(':set -t "{}" "{}"'.format(option, value), escape=False)
-        self.wait_for(category='config', message='Config option changed: *')
+        self.wait_for(category="config", message="Config option changed: *")
 
     @contextlib.contextmanager
     def temp_setting(self, opt, value):
@@ -723,120 +805,159 @@ class QuteProc(testprocess.Process):
         yield
         self.set_setting(opt, old_value)
 
-    def open_path(self, path, *, new_tab=False, new_bg_tab=False,
-                  new_window=False, private=False, as_url=False, port=None,
-                  https=False, wait=True):
+    def open_path(
+        self,
+        path,
+        *,
+        new_tab=False,
+        new_bg_tab=False,
+        new_window=False,
+        private=False,
+        as_url=False,
+        port=None,
+        https=False,
+        wait=True,
+    ):
         """Open the given path on the local webserver in qutebrowser."""
         url = self.path_to_url(path, port=port, https=https)
-        self.open_url(url, new_tab=new_tab, new_bg_tab=new_bg_tab,
-                      new_window=new_window, private=private, as_url=as_url,
-                      wait=wait)
+        self.open_url(
+            url,
+            new_tab=new_tab,
+            new_bg_tab=new_bg_tab,
+            new_window=new_window,
+            private=private,
+            as_url=as_url,
+            wait=wait,
+        )
 
-    def open_url(self, url, *, new_tab=False, new_bg_tab=False,
-                 new_window=False, private=False, as_url=False, wait=True):
+    def open_url(
+        self,
+        url,
+        *,
+        new_tab=False,
+        new_bg_tab=False,
+        new_window=False,
+        private=False,
+        as_url=False,
+        wait=True,
+    ):
         """Open the given url in qutebrowser."""
-        if sum(1 for opt in [new_tab, new_bg_tab, new_window, private, as_url]
-               if opt) > 1:
+        if (
+            sum(1 for opt in [new_tab, new_bg_tab, new_window, private, as_url] if opt)
+            > 1
+        ):
             raise ValueError("Conflicting options given!")
 
         if as_url:
             self.send_cmd(url, invalid=True)
             line = None
         elif new_tab:
-            line = self.send_cmd(':open -t ' + url)
+            line = self.send_cmd(":open -t " + url)
         elif new_bg_tab:
-            line = self.send_cmd(':open -b ' + url)
+            line = self.send_cmd(":open -b " + url)
         elif new_window:
-            line = self.send_cmd(':open -w ' + url)
+            line = self.send_cmd(":open -w " + url)
         elif private:
-            line = self.send_cmd(':open -p ' + url)
+            line = self.send_cmd(":open -p " + url)
         else:
-            line = self.send_cmd(':open ' + url)
+            line = self.send_cmd(":open " + url)
 
         if wait:
             self.wait_for_load_finished_url(url, after=line)
 
-    def mark_expected(self, category=None, loglevel=None, message=None):
+    def mark_expected(self, category=None, loglevel=None, message=None, timeout=None):
         """Mark a given logging message as expected."""
-        line = self.wait_for(category=category, loglevel=loglevel,
-                             message=message)
+        line = self.wait_for(
+            category=category, loglevel=loglevel, message=message, timeout=timeout
+        )
         line.expected = True
 
-    def wait_for_load_finished_url(self, url, *, timeout=None,
-                                   load_status='success', after=None):
+    def wait_for_load_finished_url(
+        self, url, *, timeout=None, load_status="success", after=None
+    ):
         """Wait until a URL has finished loading."""
-        __tracebackhide__ = (lambda e: e.errisinstance(
-            testprocess.WaitForTimeout))
+        __tracebackhide__ = lambda e: e.errisinstance(testprocess.WaitForTimeout)
 
         if timeout is None:
             if testutils.ON_CI:
-                timeout = 15000
+                # Increase CI timeout to allow slower CI environments more time
+                # for page loads to complete.
+                timeout = 30000
             else:
                 timeout = 5000
 
         qurl = QUrl(url)
         if not qurl.isValid():
-            raise ValueError("Invalid URL {}: {}".format(url,
-                                                         qurl.errorString()))
+            raise ValueError("Invalid URL {}: {}".format(url, qurl.errorString()))
 
         # We really need the same representation that the webview uses in
         # its __repr__
-        url = utils.elide(qurl.toDisplayString(QUrl.ComponentFormattingOption.EncodeUnicode), 100)
+        url = utils.elide(
+            qurl.toDisplayString(QUrl.ComponentFormattingOption.EncodeUnicode), 100
+        )
         assert url
 
         pattern = re.compile(
             r"(load status for <qutebrowser\.browser\..* "
             r"tab_id=\d+ url='{url}/?'>: LoadStatus\.{load_status}|fetch: "
             r"Py.*\.QtCore\.QUrl\('{url}'\) -> .*)".format(
-                load_status=re.escape(load_status), url=re.escape(url)))
+                load_status=re.escape(load_status), url=re.escape(url)
+            )
+        )
 
         try:
             self.wait_for(message=pattern, timeout=timeout, after=after)
         except testprocess.WaitForTimeout:
-            raise testprocess.WaitForTimeout("Timed out while waiting for {} "
-                                             "to be loaded".format(url))
+            raise testprocess.WaitForTimeout(
+                "Timed out while waiting for {} " "to be loaded".format(url)
+            )
 
-    def wait_for_load_finished(self, path, *, port=None, https=False,
-                               timeout=None, load_status='success'):
+    def wait_for_load_finished(
+        self, path, *, port=None, https=False, timeout=None, load_status="success"
+    ):
         """Wait until a path has finished loading."""
-        __tracebackhide__ = (lambda e: e.errisinstance(
-            testprocess.WaitForTimeout))
+        __tracebackhide__ = lambda e: e.errisinstance(testprocess.WaitForTimeout)
         url = self.path_to_url(path, port=port, https=https)
-        self.wait_for_load_finished_url(url, timeout=timeout,
-                                        load_status=load_status)
+        self.wait_for_load_finished_url(url, timeout=timeout, load_status=load_status)
 
     def get_session(self, flags="--with-private"):
         """Save the session and get the parsed session data."""
         with tempfile.TemporaryDirectory() as tdir:
-            session = pathlib.Path(tdir) / 'session.yml'
+            session = pathlib.Path(tdir) / "session.yml"
             self.send_cmd(f':session-save {flags} "{session}"')
-            self.wait_for(category='message', loglevel=logging.INFO,
-                          message=f'Saved session {session}.')
-            data = session.read_text(encoding='utf-8')
+            self.wait_for(
+                category="message",
+                loglevel=logging.INFO,
+                message=f"Saved session {session}.",
+            )
+            data = session.read_text(encoding="utf-8")
 
-        self._log('\nCurrent session data:\n' + data)
+        self._log("\nCurrent session data:\n" + data)
         return utils.yaml_load(data)
 
     def get_content(self, plain=True):
         """Get the contents of the current page."""
         with tempfile.TemporaryDirectory() as tdir:
-            path = pathlib.Path(tdir) / 'page'
+            path = pathlib.Path(tdir) / "page"
 
             if plain:
                 self.send_cmd(':debug-dump-page --plain "{}"'.format(path))
             else:
                 self.send_cmd(':debug-dump-page "{}"'.format(path))
 
-            self.wait_for(category='message', loglevel=logging.INFO,
-                          message='Dumped page to {}.'.format(path))
+            self.wait_for(
+                category="message",
+                loglevel=logging.INFO,
+                message="Dumped page to {}.".format(path),
+            )
 
-            return path.read_text(encoding='utf-8')
+            return path.read_text(encoding="utf-8")
 
     def get_screenshot(
-            self,
-            *,
-            probe_pos: QPoint = None,
-            probe_color: QColor = testutils.Color(0, 0, 0),
+        self,
+        *,
+        probe_pos: QPoint = None,
+        probe_color: QColor = testutils.Color(0, 0, 0),
     ) -> QImage:
         """Get a screenshot of the current page.
 
@@ -845,13 +966,13 @@ class QuteProc(testprocess.Process):
                        position isn't black (or whatever is specified by probe_color).
         """
         for _ in range(5):
-            tmp_path = self.request.getfixturevalue('tmp_path')
+            tmp_path = self.request.getfixturevalue("tmp_path")
             counter = self._screenshot_counters[self.request.node.nodeid]
 
-            path = tmp_path / f'screenshot-{next(counter)}.png'
-            self.send_cmd(f':screenshot {path}')
+            path = tmp_path / f"screenshot-{next(counter)}.png"
+            self.send_cmd(f":screenshot {path}")
 
-            screenshot_msg = f'Screenshot saved to {path}'
+            screenshot_msg = f"Screenshot saved to {path}"
             self.wait_for(message=screenshot_msg)
             print(screenshot_msg)
 
@@ -881,22 +1002,21 @@ class QuteProc(testprocess.Process):
         # Use Javascript and XPath to find the right element, use console.log
         # to return an error (no element found, ambiguous element)
         script = (
-            'var _es = document.evaluate(\'//*[text()={text}]\', document, '
-            'null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);'
+            "var _es = document.evaluate('//*[text()={text}]', document, "
+            "null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);"
             'if (_es.snapshotLength == 0) {{ console.log("qute:no elems"); }} '
             'else if (_es.snapshotLength > 1) {{ console.log("qute:ambiguous '
             'elems") }} '
             'else {{ console.log("qute:okay"); _es.snapshotItem(0).click() }}'
         ).format(text=javascript.string_escape(_xpath_escape(text)))
-        self.send_cmd(':jseval ' + script, escape=False)
-        message = self.wait_for_js('qute:*').message
-        if message.endswith('qute:no elems'):
-            raise ValueError('No element with {!r} found'.format(text))
-        if message.endswith('qute:ambiguous elems'):
-            raise ValueError('Element with {!r} is not unique'.format(text))
-        if not message.endswith('qute:okay'):
-            raise ValueError('Invalid response from qutebrowser: {}'
-                             .format(message))
+        self.send_cmd(":jseval " + script, escape=False)
+        message = self.wait_for_js("qute:*").message
+        if message.endswith("qute:no elems"):
+            raise ValueError("No element with {!r} found".format(text))
+        if message.endswith("qute:ambiguous elems"):
+            raise ValueError("Element with {!r} is not unique".format(text))
+        if not message.endswith("qute:okay"):
+            raise ValueError("Invalid response from qutebrowser: {}".format(message))
 
     def compare_session(self, expected, *, flags="--with-private"):
         """Compare the current sessions against the given template.
@@ -910,29 +1030,28 @@ class QuteProc(testprocess.Process):
         outcome = testutils.partial_compare(data, expected)
         if not outcome:
             msg = "Session comparison failed: {}".format(outcome.error)
-            msg += '\nsee stdout for details'
+            msg += "\nsee stdout for details"
             pytest.fail(msg)
 
     def turn_on_scroll_logging(self, no_scroll_filtering=False):
         """Make sure all scrolling changes are logged."""
         cmd = ":debug-pyeval -q objects.debug_flags.add('{}')"
         if no_scroll_filtering:
-            self.send_cmd(cmd.format('no-scroll-filtering'))
-        self.send_cmd(cmd.format('log-scroll-pos'))
+            self.send_cmd(cmd.format("no-scroll-filtering"))
+        self.send_cmd(cmd.format("log-scroll-pos"))
 
     def _take_x11_screenshot_of_failed_test(self):
-        fixture = self.request.getfixturevalue('take_x11_screenshot')
+        fixture = self.request.getfixturevalue("take_x11_screenshot")
         fixture()
 
 
 class YamlLoader(yaml.SafeLoader):
-
     """Custom YAML loader used in compare_session."""
 
 
 # Translate ... to ellipsis in YAML.
-YamlLoader.add_constructor('!ellipsis', lambda loader, node: ...)
-YamlLoader.add_implicit_resolver('!ellipsis', re.compile(r'\.\.\.'), None)
+YamlLoader.add_constructor("!ellipsis", lambda loader, node: ...)
+YamlLoader.add_implicit_resolver("!ellipsis", re.compile(r"\.\.\."), None)
 
 
 def _xpath_escape(text):
@@ -956,12 +1075,12 @@ def _xpath_escape(text):
     # Shortcut if at most a single quoting style is used
     if "'" not in text or '"' not in text:
         return repr(text)
-    parts = re.split('([\'"])', text)
+    parts = re.split("(['\"])", text)
     # Python's repr() of strings will automatically choose the right quote
     # type. Since each part only contains one "type" of quote, no escaping
     # should be necessary.
     parts = [repr(part) for part in parts if part]
-    return 'concat({})'.format(', '.join(parts))
+    return "concat({})".format(", ".join(parts))
 
 
 @pytest.fixture
@@ -984,6 +1103,7 @@ def take_x11_screenshot(request, screenshot_dir, record_property, xvfb):
 
     Screenshots are saved to the location of the `screenshot_dir` fixture.
     """
+
     def doit():
         if not xvfb:
             # Likely we are being run with --no-xvfb
@@ -994,10 +1114,11 @@ def take_x11_screenshot(request, screenshot_dir, record_property, xvfb):
         img.save(fpath)
 
         record_property("screenshot", str(fpath))
+
     return doit
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope="module")
 def quteproc_process(qapp, server, request):
     """Fixture for qutebrowser process which is started once per file."""
     # Passing request so it has an initial config

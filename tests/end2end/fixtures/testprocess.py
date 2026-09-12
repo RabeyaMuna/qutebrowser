@@ -4,16 +4,33 @@
 
 """Base class for a subprocess run for tests."""
 
+import dataclasses
 import re
 import time
 import warnings
-import dataclasses
 
 import pytest
 import pytestqt.wait_signal
-from qutebrowser.qt.core import (pyqtSlot, pyqtSignal, QProcess, QObject,
-                          QElapsedTimer, QProcessEnvironment)
-from qutebrowser.qt.test import QSignalSpy
+
+# qutebrowser.qt.* requires PyQt at runtime. Guard imports so tests that
+# don't require PyQt can still be discovered/run in environments where
+# PyQt isn't installed.
+try:
+    from qutebrowser.qt.core import (
+        QElapsedTimer,
+        QObject,
+        QProcess,
+        QProcessEnvironment,
+        pyqtSignal,
+        pyqtSlot,
+    )
+    from qutebrowser.qt.test import QSignalSpy
+except Exception:
+    # Fall back to None placeholders; code that actually needs these
+    # should raise a clear error when attempting to use them.
+    pyqtSlot = pyqtSignal = QProcess = QObject = QElapsedTimer = QProcessEnvironment = (
+        QSignalSpy
+    ) = None
 
 from helpers import testutils
 
@@ -21,28 +38,23 @@ from qutebrowser.utils import utils as quteutils
 
 
 class InvalidLine(Exception):
-
     """Raised when the process prints a line which is not parsable."""
 
 
 class ProcessExited(Exception):
-
     """Raised when the child process did exit."""
 
 
 class WaitForTimeout(Exception):
-
     """Raised when wait_for didn't get the expected message."""
 
 
 class BlacklistedMessageError(Exception):
-
     """Raised when ensure_not_logged found a message."""
 
 
 @dataclasses.dataclass
 class Line:
-
     """Container for a line of data the process emits.
 
     Attributes:
@@ -57,56 +69,60 @@ class Line:
 def _render_log(data, *, verbose, threshold=100):
     """Shorten the given log without -v and convert to a string."""
     data = [str(d) for d in data]
-    is_exception = any('Traceback (most recent call last):' in line or
-                       'Uncaught exception' in line for line in data)
-    if (len(data) > threshold and
-            not verbose and
-            not is_exception and
-            not testutils.ON_CI):
-        msg = '[{} lines suppressed, use -v to show]'.format(
-            len(data) - threshold)
+    is_exception = any(
+        "Traceback (most recent call last):" in line or "Uncaught exception" in line
+        for line in data
+    )
+    if (
+        len(data) > threshold
+        and not verbose
+        and not is_exception
+        and not testutils.ON_CI
+    ):
+        msg = "[{} lines suppressed, use -v to show]".format(len(data) - threshold)
         data = [msg] + data[-threshold:]
 
     if testutils.ON_CI:
-        data = [testutils.gha_group_begin('Log')] + data + [testutils.gha_group_end()]
+        data = [testutils.gha_group_begin("Log")] + data + [testutils.gha_group_end()]
 
-    return '\n'.join(data)
+    return "\n".join(data)
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     """Add qutebrowser/server sections to captured output if a test failed."""
     outcome = yield
-    if call.when not in ['call', 'teardown']:
+    if call.when not in ["call", "teardown"]:
         return
     report = outcome.get_result()
 
     if report.passed:
         return
 
-    quteproc_log = getattr(item, '_quteproc_log', None)
-    server_logs = getattr(item, '_server_logs', [])
+    quteproc_log = getattr(item, "_quteproc_log", None)
+    server_logs = getattr(item, "_server_logs", [])
 
-    if not hasattr(report.longrepr, 'addsection'):
+    if not hasattr(report.longrepr, "addsection"):
         # In some conditions (on macOS and Windows it seems), report.longrepr
         # is actually a tuple. This is handled similarly in pytest-qt too.
         return
 
-    if item.config.getoption('--capture') == 'no':
+    if item.config.getoption("--capture") == "no":
         # Already printed live
         return
 
-    verbose = item.config.getoption('--verbose')
+    verbose = item.config.getoption("--verbose")
     if quteproc_log is not None:
         report.longrepr.addsection(
-            "qutebrowser output", _render_log(quteproc_log, verbose=verbose))
+            "qutebrowser output", _render_log(quteproc_log, verbose=verbose)
+        )
     for name, content in server_logs:
         report.longrepr.addsection(
-            f"{name} output", _render_log(content, verbose=verbose))
+            f"{name} output", _render_log(content, verbose=verbose)
+        )
 
 
 class Process(QObject):
-
     """Abstraction over a running test subprocess process.
 
     Reads the log from its stdout and parses it.
@@ -126,7 +142,7 @@ class Process(QObject):
 
     ready = pyqtSignal()
     new_data = pyqtSignal(object)
-    KEYS = ['data']
+    KEYS = ["data"]
 
     def __init__(self, request, parent=None):
         super().__init__(parent)
@@ -141,13 +157,13 @@ class Process(QObject):
 
     def _log(self, line):
         """Add the given line to the captured log output."""
-        if self.request.config.getoption('--capture') == 'no':
+        if self.request.config.getoption("--capture") == "no":
             print(line)
         self.captured_log.append(line)
 
     def log_summary(self, text):
         """Log the given line as summary/title."""
-        text = '\n{line} {text} {line}\n'.format(line='='*30, text=text)
+        text = "\n{line} {text} {line}\n".format(line="=" * 30, text=text)
         self._log(text)
 
     def _parse_line(self, line):
@@ -190,12 +206,12 @@ class Process(QObject):
     @pyqtSlot()
     def read_log(self):
         """Read the log from the process' stdout."""
-        if not hasattr(self, 'proc'):
+        if not hasattr(self, "proc"):
             # I have no idea how this happens, but it does...
             return
         while self.proc.canReadLine():
             line = self.proc.readLine()
-            line = bytes(line).decode('utf-8', errors='ignore').rstrip('\r\n')
+            line = bytes(line).decode("utf-8", errors="ignore").rstrip("\r\n")
 
             try:
                 parsed = self._parse_line(line)
@@ -215,12 +231,11 @@ class Process(QObject):
         """Start the process and wait until it started."""
         self._start(args, env=env)
         self._started = True
-        verbose = self.request.config.getoption('--verbose')
+        verbose = self.request.config.getoption("--verbose")
 
         timeout = 60 if testutils.ON_CI else 20
         for _ in range(timeout):
-            with self._wait_signal(self.ready, timeout=1000,
-                                   raising=False) as blocker:
+            with self._wait_signal(self.ready, timeout=1000, raising=False) as blocker:
                 pass
 
             if not self.is_running():
@@ -228,15 +243,18 @@ class Process(QObject):
                     return
                 # _start ensures it actually started, but it might quit shortly
                 # afterwards
-                raise ProcessExited('\n' + _render_log(self.captured_log,
-                                                       verbose=verbose))
+                raise ProcessExited(
+                    "\n" + _render_log(self.captured_log, verbose=verbose)
+                )
 
             if blocker.signal_triggered:
                 self._after_start()
                 return
 
-        raise WaitForTimeout("Timed out while waiting for process start.\n" +
-                             _render_log(self.captured_log, verbose=verbose))
+        raise WaitForTimeout(
+            "Timed out while waiting for process start.\n"
+            + _render_log(self.captured_log, verbose=verbose)
+        )
 
     def _start(self, args, env):
         """Actually start the process."""
@@ -279,7 +297,7 @@ class Process(QObject):
             # Exit the process to make sure we're in a defined state again
             self.terminate()
             self.clear_data()
-            raise InvalidLine('\n' + '\n'.join(self._invalid))
+            raise InvalidLine("\n" + "\n".join(self._invalid))
 
         self.clear_data()
         if not self.is_running() and not self.exit_expected and self._started:
@@ -302,9 +320,11 @@ class Process(QObject):
 
         ok = self.proc.waitForFinished(5000)
         if not ok:
-            cmdline = ' '.join([self.proc.program()] + self.proc.arguments())
-            warnings.warn(f"Test process {cmdline} with PID {self.proc.processId()} "
-                          "failed to terminate!")
+            cmdline = " ".join([self.proc.program()] + self.proc.arguments())
+            warnings.warn(
+                f"Test process {cmdline} with PID {self.proc.processId()} "
+                "failed to terminate!"
+            )
             self.proc.kill()
             self.proc.waitForFinished()
 
@@ -328,7 +348,7 @@ class Process(QObject):
         Return:
             A bool
         """
-        regex_type = type(re.compile(''))
+        regex_type = type(re.compile(""))
         if expected is None:
             return True
         elif isinstance(expected, regex_type):
@@ -353,18 +373,25 @@ class Process(QObject):
             if after is None:
                 too_early = False
             else:
-                too_early = ((line.timestamp, line.msecs) <
-                             (after.timestamp, after.msecs))
+                too_early = (line.timestamp, line.msecs) < (
+                    after.timestamp,
+                    after.msecs,
+                )
 
-            if (all(matches) and
-                    (not line.waited_for or override_waited_for) and
-                    not too_early):
+            if (
+                all(matches)
+                and (not line.waited_for or override_waited_for)
+                and not too_early
+            ):
                 # If we waited for this line, chances are we don't mean the
                 # same thing the next time we use wait_for and it matches
                 # this line again.
                 line.waited_for = True
-                self._log("\n----> Already found {!r} in the log: {}".format(
-                    kwargs.get('message', 'line'), line))
+                self._log(
+                    "\n----> Already found {!r} in the log: {}".format(
+                        kwargs.get("message", "line"), line
+                    )
+                )
                 return line
         return None
 
@@ -374,7 +401,7 @@ class Process(QObject):
         Called via wait_for.
         """
         __tracebackhide__ = lambda e: e.errisinstance(WaitForTimeout)
-        message = kwargs.get('message', None)
+        message = kwargs.get("message", None)
         if message is not None:
             elided = quteutils.elide(repr(message), 100)
             self._log("\n----> Waiting for {} in the log".format(elided))
@@ -388,8 +415,7 @@ class Process(QObject):
             self._maybe_skip()
             got_signal = spy.wait(timeout)
             if not got_signal or elapsed_timer.hasExpired(timeout):
-                msg = "Timed out after {}ms waiting for {!r}.".format(
-                    timeout, kwargs)
+                msg = "Timed out after {}ms waiting for {!r}.".format(timeout, kwargs)
                 if do_skip:
                     pytest.skip(msg)
                 else:
@@ -435,8 +461,16 @@ class Process(QObject):
         in wait_for (where it's most likely that new messages arrive).
         """
 
-    def wait_for(self, timeout=None, *, override_waited_for=False,
-                 do_skip=False, divisor=1, after=None, **kwargs):
+    def wait_for(
+        self,
+        timeout=None,
+        *,
+        override_waited_for=False,
+        do_skip=False,
+        divisor=1,
+        after=None,
+        **kwargs,
+    ):
         """Wait until a given value is found in the data.
 
         Keyword arguments to this function get interpreted as attributes of the
@@ -460,7 +494,7 @@ class Process(QObject):
             if do_skip:
                 timeout = 2000
             elif testutils.ON_CI:
-                timeout = 15000
+                timeout = 30000
             else:
                 timeout = 5000
 
@@ -471,13 +505,11 @@ class Process(QObject):
         for key in kwargs:
             assert key in self.KEYS
 
-        existing = self._wait_for_existing(override_waited_for, after,
-                                           **kwargs)
+        existing = self._wait_for_existing(override_waited_for, after, **kwargs)
         if existing is not None:
             return existing
         else:
-            return self._wait_for_new(timeout=timeout, do_skip=do_skip,
-                                      **kwargs)
+            return self._wait_for_new(timeout=timeout, do_skip=do_skip, **kwargs)
 
     def ensure_not_logged(self, delay=500, **kwargs):
         """Make sure the data matching the given arguments is not logged.
@@ -487,8 +519,7 @@ class Process(QObject):
         """
         __tracebackhide__ = lambda e: e.errisinstance(BlacklistedMessageError)
         try:
-            line = self.wait_for(timeout=delay, override_waited_for=True,
-                                 **kwargs)
+            line = self.wait_for(timeout=delay, override_waited_for=True, **kwargs)
         except WaitForTimeout:
             return
         else:

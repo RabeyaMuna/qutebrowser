@@ -10,17 +10,15 @@
 
 import dataclasses
 import traceback
-from typing import Any, Union, Optional
-from collections.abc import Iterable, Callable
+from collections.abc import Callable, Iterable
+from typing import Any, Optional, Union
 
-from qutebrowser.qt.core import pyqtSignal, pyqtBoundSignal, QObject
-
-from qutebrowser.utils import usertypes, log
+from qutebrowser.qt.core import QObject, pyqtBoundSignal, pyqtSignal
+from qutebrowser.utils import log, usertypes
 
 
 @dataclasses.dataclass
 class MessageInfo:
-
     """Information associated with a message to be displayed."""
 
     level: usertypes.MessageLevel
@@ -37,12 +35,13 @@ def _log_stack(typ: str, stack: str) -> None:
         stack: An optional stacktrace.
     """
     lines = stack.splitlines()
-    stack_text = '\n'.join(line.rstrip() for line in lines)
+    stack_text = "\n".join(line.rstrip() for line in lines)
     log.message.debug("Stack for {} message:\n{}".format(typ, stack_text))
 
 
 def error(
-    message: str, *,
+    message: str,
+    *,
     stack: str = None,
     replace: str = None,
     rich: bool = False,
@@ -56,10 +55,10 @@ def error(
         rich: Show message as rich text.
     """
     if stack is None:
-        stack = ''.join(traceback.format_stack())
-        typ = 'error'
+        stack = "".join(traceback.format_stack())
+        typ = "error"
     else:
-        typ = 'error (from exception)'
+        typ = "error (from exception)"
     _log_stack(typ, stack)
     log.message.error(message)
     global_bridge.show(
@@ -78,7 +77,7 @@ def warning(message: str, *, replace: str = None, rich: bool = False) -> None:
         replace: Replace existing messages which are still being shown.
         rich: Show message as rich text.
     """
-    _log_stack('warning', ''.join(traceback.format_stack()))
+    _log_stack("warning", "".join(traceback.format_stack()))
     log.message.warning(message)
     global_bridge.show(
         level=usertypes.MessageLevel.warning,
@@ -105,13 +104,16 @@ def info(message: str, *, replace: str = None, rich: bool = False) -> None:
     )
 
 
-def _build_question(title: str,
-                    text: str = None, *,
-                    mode: usertypes.PromptMode,
-                    default: Union[None, bool, str] = None,
-                    abort_on: Iterable[pyqtBoundSignal] = (),
-                    url: str = None,
-                    option: bool = None) -> usertypes.Question:
+def _build_question(
+    title: str,
+    text: str = None,
+    *,
+    mode: usertypes.PromptMode,
+    default: Union[None, bool, str] = None,
+    abort_on: Iterable[pyqtBoundSignal] = (),
+    url: str = None,
+    option: bool = None,
+) -> usertypes.Question:
     """Common function for ask/ask_async."""
     question = usertypes.Question()
     question.title = title
@@ -154,10 +156,12 @@ def ask(*args: Any, **kwargs: Any) -> Any:
     return answer
 
 
-def ask_async(title: str,
-              mode: usertypes.PromptMode,
-              handler: Callable[[Any], None],
-              **kwargs: Any) -> None:
+def ask_async(
+    title: str,
+    mode: usertypes.PromptMode,
+    handler: Callable[[Any], None],
+    **kwargs: Any,
+) -> None:
     """Ask an async question in the statusbar.
 
     Args:
@@ -176,10 +180,13 @@ def ask_async(title: str,
 _ActionType = Callable[[], Any]
 
 
-def confirm_async(*, yes_action: _ActionType,
-                  no_action: _ActionType = None,
-                  cancel_action: _ActionType = None,
-                  **kwargs: Any) -> usertypes.Question:
+def confirm_async(
+    *,
+    yes_action: _ActionType,
+    no_action: _ActionType = None,
+    cancel_action: _ActionType = None,
+    **kwargs: Any,
+) -> usertypes.Question:
     """Ask a yes/no question to the user and execute the given actions.
 
     Args:
@@ -195,7 +202,7 @@ def confirm_async(*, yes_action: _ActionType,
     Return:
         The question object.
     """
-    kwargs['mode'] = usertypes.PromptMode.yesno
+    kwargs["mode"] = usertypes.PromptMode.yesno
     question = _build_question(**kwargs)
     question.answered_yes.connect(yes_action)
     if no_action is not None:
@@ -209,7 +216,6 @@ def confirm_async(*, yes_action: _ActionType,
 
 
 class GlobalMessageBridge(QObject):
-
     """Global (not per-window) message bridge for errors/infos/warnings.
 
     Attributes:
@@ -231,7 +237,7 @@ class GlobalMessageBridge(QObject):
         mode_left: Emitted when a keymode was left in any window.
     """
 
-    show_message = pyqtSignal(MessageInfo)
+    show_message = pyqtSignal(usertypes.MessageLevel, str, object)
     prompt_done = pyqtSignal(usertypes.KeyMode)
     ask_question = pyqtSignal(usertypes.Question, bool)
     mode_left = pyqtSignal(usertypes.KeyMode)
@@ -242,9 +248,9 @@ class GlobalMessageBridge(QObject):
         self._connected = False
         self._cache: list[MessageInfo] = []
 
-    def ask(self, question: usertypes.Question,
-            blocking: bool, *,
-            log_stack: bool = False) -> None:
+    def ask(
+        self, question: usertypes.Question, blocking: bool, *, log_stack: bool = False
+    ) -> None:
         """Ask a question to the user.
 
         Note this method doesn't return the answer, it only blocks. The caller
@@ -268,7 +274,8 @@ class GlobalMessageBridge(QObject):
         """Show the given message."""
         msg = MessageInfo(level=level, text=text, replace=replace, rich=rich)
         if self._connected:
-            self.show_message.emit(msg)
+            # Emit as separate args to match documented/consumer expectations
+            self.show_message.emit(level, text, replace)
         else:
             self._cache.append(msg)
 

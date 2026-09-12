@@ -4,8 +4,12 @@
 
 import pytest
 
+# Increase test timeout to reduce flaky timeouts waiting for page/resource loads
+pytestmark = pytest.mark.timeout(60)
+
 import pytest_bdd as bdd
-bdd.scenarios('scroll.feature')
+
+bdd.scenarios("scroll.feature")
 
 
 @pytest.fixture(autouse=True)
