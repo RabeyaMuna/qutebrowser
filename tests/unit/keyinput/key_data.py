@@ -592,6 +592,7 @@ KEYS = [
     Key('Camera', 'Camera Shutter', qtest=False),
     Key('CameraFocus', 'Camera Focus', qtest=False),
 
+    Key('Keyboard', qtest=False),
     Key('unknown', 'Unknown', qtest=False),
     # 0x0 is used by Qt for unknown keys...
     Key(attribute='', name='nil', member=keyutils._NIL_KEY, qtest=False),

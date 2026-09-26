@@ -85,6 +85,8 @@ def is_ignored_lowlevel_message(message):
         'libEGL warning: egl: failed to create dri2 screen',
         'libEGL warning: DRI3 error: Could not get DRI3 device',
         'libEGL warning: Activate DRI3 at Xorg or build mesa with DRI2',
+        # D-Bus, Docker/CI environment
+        'Failed to connect to the bus: *',
     ]
     return any(testutils.pattern_match(pattern=pattern, value=message)
                for pattern in ignored_messages)
