@@ -89,10 +89,12 @@ def get_lib_path(executable, name, required=True):
         required: Whether Error should be raised if the lib was not found.
     """
     code = [
+        'import sys',
         'try:',
         '    import {}'.format(name),
         'except ImportError as e:',
         '    print("ImportError: " + str(e))',
+        '    sys.exit(1)',
         'else:',
         '    print("path: " + {}.__file__)'.format(name)
     ]
@@ -101,7 +103,15 @@ def get_lib_path(executable, name, required=True):
     try:
         prefix, data = output.split(': ')
     except ValueError:
-        raise ValueError("Unexpected output: {!r}".format(output))
+        # If the import fails, run_py will return empty output because of sys.exit(1).
+        # In that case, treat it as an ImportError.
+        if required:
+            wrapper = os.environ.get("QUTE_QT_WRAPPER", "unset")
+            raise Error(
+                f"Could not import {name} with {executable}: Module not found "
+                f"(QUTE_QT_WRAPPER: {wrapper})"
+            )
+        return None
 
     if prefix == 'path':
         return data
@@ -128,13 +138,20 @@ def link_pyqt(executable, venv_path, *, version):
     if version not in ["5", "6"]:
         raise ValueError(f"Invalid version {version}")
 
-    pyqt_dir = os.path.dirname(get_lib_path(executable, f'PyQt{version}.QtCore'))
+    pyqt_dir_path = get_lib_path(executable, f'PyQt{version}.QtCore', required=False)
+    if pyqt_dir_path is None:
+        # PyQt is not installed in the system Python; nothing to link.
+        print(f"PyQt{version} not found in {executable}, skipping linking.")
+        return
+    pyqt_dir = os.path.dirname(pyqt_dir_path)
 
     try:
         get_lib_path(executable, f'PyQt{version}.sip')
     except Error:
         # There is no PyQt*.sip, so we need to copy the toplevel sip.
-        sip_file = get_lib_path(executable, 'sip')
+        sip_file = get_lib_path(executable, 'sip', required=False)
+        if sip_file is None:
+            sip_file = None
     else:
         # There is a PyQt*.sip, it'll get copied with the PyQt* dir.
         sip_file = None
