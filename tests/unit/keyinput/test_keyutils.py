@@ -61,7 +61,7 @@ def test_key_data_keys():
                  for name in testutils.enum_members(Qt, Qt.Key)}
     key_data_names = {key.attribute for key in sorted(key_data.KEYS)}
     diff = key_names - key_data_names
-    assert not diff
+    assert not diff, f"Missing keys in key_data.KEYS: {diff}"
 
 
 def test_key_data_modifiers():

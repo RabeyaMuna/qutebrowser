@@ -368,6 +368,7 @@ class QuteProc(testprocess.Process):
         self._instance_id = next(instance_counter)
         self._run_counter = itertools.count()
         self._screenshot_counters = collections.defaultdict(itertools.count)
+        self._ipc_retries = 0
 
     def _process_line(self, log_line):
         """Check if the line matches any initial lines we're interested in."""
@@ -609,8 +610,14 @@ class QuteProc(testprocess.Process):
 
     def _wait_for_ipc(self):
         """Wait for an IPC message to arrive."""
-        self.wait_for(category='ipc', module='ipc', function='on_ready_read',
-                      message='Read from socket *')
+        try:
+            self.wait_for(category='ipc', module='ipc', function='on_ready_read',
+                          message='Read from socket *', timeout=10)
+        except testprocess.WaitForTimeout:
+            if self._ipc_retries < 3:
+                self._ipc_retries += 1
+                return self._wait_for_ipc()
+            raise
 
     @contextlib.contextmanager
     def disable_capturing(self):

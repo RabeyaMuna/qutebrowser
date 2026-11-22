@@ -1104,7 +1104,7 @@ class TestWebEngineVersions:
         print(version.qtwebengine_versions())  # useful when adding new versions
         inferred = version.WebEngineVersions.from_webengine(
             qWebEngineVersion(), source="API")
-        assert inferred.chromium_security == qWebEngineChromiumSecurityPatchVersion()
+        assert inferred.chromium_security == str(qWebEngineChromiumSecurityPatchVersion())
 
 
 class FakeQSslSocket:
