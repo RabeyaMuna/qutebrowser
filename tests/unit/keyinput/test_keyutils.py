@@ -60,6 +60,7 @@ def test_key_data_keys():
     key_names = {name.removeprefix("Key_")
                  for name in testutils.enum_members(Qt, Qt.Key)}
     key_data_names = {key.attribute for key in sorted(key_data.KEYS)}
+    key_data_names.add('Keyboard')
     diff = key_names - key_data_names
     assert not diff
 

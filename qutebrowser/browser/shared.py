@@ -232,7 +232,7 @@ def handle_certificate_error(
         first_party_url.isValid() and
         not request_url.matches(first_party_url, urlutils.FormatOption.REMOVE_SCHEME))
 
-    if conf == 'ask' or conf == 'ask-block-thirdparty' and not is_resource:
+    if conf == 'ask' or (conf == 'ask-block-thirdparty' and not is_resource):
         err_template = jinja.environment.from_string("""
             {% if is_resource %}
             <p>

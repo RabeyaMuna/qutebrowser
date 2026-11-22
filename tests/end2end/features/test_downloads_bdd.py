@@ -59,6 +59,7 @@ def download_ssl_redirect(server, ssl_server, quteproc):
     path = "data/downloads/download.bin"
     url = f"https://localhost:{ssl_server.port}/redirect-http/{path}?port={server.port}"
     quteproc.send_cmd(f":download {url}")
+    quteproc.wait_for(message="Certificate error")
 
 
 @bdd.when("the unwritable dir is unwritable")

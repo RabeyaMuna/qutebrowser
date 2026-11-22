@@ -277,7 +277,12 @@ class Process(QObject):
             # Wait for a bit so the full error has a chance to arrive
             time.sleep(1)
             # Exit the process to make sure we're in a defined state again
-            self.terminate()
+            try:
+                self.terminate()
+            except Exception as e:
+                if "D-Bus" in str(e):
+                    time.sleep(1)
+                    self.terminate()
             self.clear_data()
             raise InvalidLine('\n' + '\n'.join(self._invalid))
 

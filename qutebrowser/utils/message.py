@@ -67,6 +67,7 @@ def error(
         text=message,
         replace=replace,
         rich=rich,
+        secure=True,
     )
 
 

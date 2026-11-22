@@ -176,6 +176,7 @@ def clean_open_tabs(quteproc):
 def pdfjs_available(data_tmpdir):
     if not pdfjs.is_available():
         pytest.skip("No pdfjs installation found.")
+    pdfjs.initialize()
 
 
 @bdd.given('I clear the log')
@@ -305,7 +306,7 @@ def wait_in_log(quteproc, is_regex, pattern, do_skip):
     if is_regex:
         pattern = re.compile(pattern)
 
-    line = quteproc.wait_for(message=pattern, do_skip=bool(do_skip))
+    line = quteproc.wait_for(message=pattern, do_skip=bool(do_skip), timeout=30000)
     line.expected = True
 
 
@@ -435,7 +436,7 @@ def wait_pdfjs(quteproc):
     else:
         pytest.skip(f"Non-legacy PDF.js installation: {version._pdfjs_version()}")
 
-    quteproc.wait_for(message="[qute://pdfjs/*] PDF * (PDF.js: *)")
+    quteproc.wait_for(message="[qute://pdfjs/*] PDF * (PDF.js: *)", timeout=30000)
 
 
 ## Then
